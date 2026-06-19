@@ -4,6 +4,10 @@
 :meth:`Explorer.run_session` launches walks from many seeds into a shared
 :class:`CoverageState`. The output is the union of walk trajectories, later
 filtered (ADR-0008) into the deliverable.
+
+An optional :class:`~gaussian_robot.events.EventSink` receives live
+:class:`~gaussian_robot.events.SessionEvent`s for observability (e.g. the web
+dashboard) without coupling the core to the UI.
 """
 
 from __future__ import annotations
@@ -12,7 +16,18 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from gaussian_robot.metrics.coverage import CoverageState, floor_coverage
+from gaussian_robot.events import (
+    EventSink,
+    SessionEndEvent,
+    SessionStartEvent,
+    StepEvent,
+)
+from gaussian_robot.metrics.coverage import (
+    CoverageState,
+    floor_coverage,
+    floor_xy,
+    pose_space_coverage,
+)
 from gaussian_robot.nav.action import Action, ActionSpace, apply_action
 from gaussian_robot.nav.observation import ObservationBuilder
 from gaussian_robot.nav.robot import Robot
@@ -27,7 +42,8 @@ from gaussian_robot.nav.stop import (
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import Pose
 from gaussian_robot.splat.scene import SplatScene
-from gaussian_robot.vlm.client import VLMClient
+from gaussian_robot.vlm.client import Decision, VLMClient
+from gaussian_robot.vlm.observation import Observation
 
 
 @dataclass
@@ -61,6 +77,12 @@ def _render_degenerate(result: RenderResult, *, min_finite_frac: float = 0.25) -
     return finite_frac < min_finite_frac
 
 
+def _floor_array(poses: list[Pose], up_axis: str) -> np.ndarray:
+    if not poses:
+        return np.empty((0, 2), dtype=np.float64)
+    return np.array([floor_xy(p.position, up_axis)[0] for p in poses], dtype=np.float64)
+
+
 @dataclass
 class Explorer:
     """Runs walks and sessions.
@@ -68,7 +90,8 @@ class Explorer:
     The renderer, VLM and observation builder are injected (seam per ADR-0001).
     Walk-level ``walk_policies`` are OR-composed and queried each step; the
     ``max_steps`` cap is an additional safety net. Session-level
-    ``session_policies`` are evaluated between walks.
+    ``session_policies`` are evaluated between walks. Set ``event_sink`` to
+    receive live events.
     """
 
     scene: SplatScene
@@ -80,6 +103,7 @@ class Explorer:
     walk_policies: list[StopPolicy] = field(default_factory=list)
     session_policies: list[SessionStopPolicy] = field(default_factory=list)
     max_steps: int = 40
+    event_sink: EventSink | None = None
 
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, seed_id: str = ""
@@ -133,6 +157,19 @@ class Explorer:
                 coverage.add_pose(next_pose, seed_id=seed_id)
                 trail.append(next_pose)
 
+            self._emit_step(
+                seed_id,
+                step_idx + 1,
+                observation,
+                decision,
+                action,
+                next_pose,
+                novelty_next,
+                degenerate,
+                coverage,
+                trail,
+            )
+
             if any_walk_stop(self.walk_policies):
                 break
 
@@ -140,8 +177,19 @@ class Explorer:
 
     def run_session(self, seed_poses: list[Pose], coverage: CoverageState) -> list[WalkResult]:
         """Launch a walk per seed into the shared ``coverage`` until session stop."""
+        if self.event_sink is not None:
+            self.event_sink(
+                SessionStartEvent(
+                    bounds_min=coverage.bounds_min,
+                    bounds_max=coverage.bounds_max,
+                    up_axis=coverage.up_axis,
+                    total_seeds=len(seed_poses),
+                )
+            )
+
         results: list[WalkResult] = []
         prev_cov = floor_coverage(coverage, radius=self.coverage_radius)
+        stopped = False
         for i, seed in enumerate(seed_poses):
             gain = 0.0
             if i > 0:
@@ -155,9 +203,55 @@ class Explorer:
                 last_batch_coverage_gain=gain,
             )
             if i > 0 and any_session_stop(self.session_policies, ctx):
+                stopped = True
                 break
             results.append(self.run_walk(seed, coverage, seed_id=f"seed{i}"))
+
+        if self.event_sink is not None:
+            total_steps = sum(len(r.steps) for r in results)
+            self.event_sink(
+                SessionEndEvent(
+                    reason="session_policy" if stopped else "completed",
+                    total_steps=total_steps,
+                    total_poses=len(coverage),
+                )
+            )
         return results
+
+    def _emit_step(
+        self,
+        seed_id: str,
+        step: int,
+        observation: Observation,
+        decision: Decision,
+        action: Action,
+        pose: Pose,
+        novelty: float,
+        degenerate: bool,
+        coverage: CoverageState,
+        trail: list[Pose],
+    ) -> None:
+        if self.event_sink is None:
+            return
+        cov_floor = floor_coverage(coverage, radius=self.coverage_radius)
+        cov_ps = pose_space_coverage(coverage, radius=self.coverage_radius)
+        self.event_sink(
+            StepEvent(
+                seed_id=seed_id,
+                step=step,
+                budget=self.max_steps,
+                observation=observation,
+                decision=decision,
+                action=action,
+                pose=pose,
+                novelty=novelty,
+                degenerate=degenerate,
+                coverage_floor=cov_floor,
+                coverage_pose_space=cov_ps,
+                sampled_floor=coverage.floor_positions(),
+                trail_floor=_floor_array(trail, self.scene.up_axis),
+            )
+        )
 
     def _is_degenerate(self, pose: Pose, render: RenderResult) -> bool:
         out_of_bounds = bool(

@@ -10,6 +10,7 @@ import typer
 from rich import print as rprint
 
 from gaussian_robot import __version__
+from gaussian_robot.ui.server import serve_dashboard
 
 app = typer.Typer(
     name="gaussian-robot",
@@ -38,6 +39,13 @@ def info() -> None:
         "  [green]filters[/green]         : quality → dedup → budget (ADR-0008)\n"
         "  [yellow]diffusion GT[/yellow]  : not wired (Goal-A eval, ADR-0007)"
     )
+
+
+@app.command()
+def ui(host: str = "127.0.0.1", port: int = 8787) -> None:
+    """Run the local dashboard."""
+    rprint(f"[bold]dashboard[/bold] http://{host}:{port}")
+    serve_dashboard(host, port)
 
 
 if __name__ == "__main__":

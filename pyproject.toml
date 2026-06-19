@@ -90,5 +90,5 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 files = ["src", "tests"]
 [[tool.mypy.overrides]]
-module = ["gsplat.*", "torch.*"]
+module = ["gsplat.*", "httpx.*", "torch.*"]
 ignore_missing_imports = true
