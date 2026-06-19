@@ -43,7 +43,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_headers("application/json; charset=utf-8", len(body))
             return
         if self.path == "/api/vllm/status":
-            body = json.dumps(_status_payload(_VLLM.status())).encode()
+            body = json.dumps(_status_payload(_VLLM.status(load_config()))).encode()
             self._send_headers("application/json; charset=utf-8", len(body))
             return
         self.send_error(HTTPStatus.NOT_FOUND)
@@ -56,7 +56,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_json(load_config().model_dump(mode="json"))
             return
         if self.path == "/api/vllm/status":
-            self._send_json(_status_payload(_VLLM.status()))
+            self._send_json(_status_payload(_VLLM.status(load_config())))
             return
         if self.path == "/api/run":
             self._stream_run()
@@ -128,7 +128,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 status=HTTPStatus.BAD_REQUEST,
             )
             return
-        self._send_json({"ok": True, **_status_payload(status)})
+        self._send_json({"ok": status.ready, **_status_payload(status)})
 
     def _write_sse(self, message: dict[str, Any]) -> None:
         payload = json.dumps(message, separators=(",", ":"))
@@ -174,6 +174,7 @@ def _status_payload(status: VLLMStatus) -> dict[str, Any]:
         "pid": status.pid,
         "command": status.command,
         "returncode": status.returncode,
+        "ready": status.ready,
         "log_path": status.log_path,
         "log_tail": status.log_tail,
     }

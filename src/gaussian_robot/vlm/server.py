@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +27,7 @@ class VLLMStatus:
     pid: int | None
     command: list[str]
     returncode: int | None = None
+    ready: bool = False
     log_path: str = str(_VLLM_LOG_PATH)
     log_tail: str = ""
 
@@ -52,7 +55,7 @@ class VLLMServerProcess:
             log_file.close()
         self._command = command
         time.sleep(1.0)
-        return self.status()
+        return self.status(config)
 
     def stop(self) -> VLLMStatus:
         process = self._process
@@ -60,16 +63,18 @@ class VLLMServerProcess:
             process.terminate()
         return self.status()
 
-    def status(self) -> VLLMStatus:
+    def status(self, config: RunConfig | None = None) -> VLLMStatus:
         process = self._process
         if process is None:
             return VLLMStatus(running=False, pid=None, command=self._command, log_tail=_tail_log())
         returncode = process.poll()
+        running = returncode is None
         return VLLMStatus(
-            running=returncode is None,
+            running=running,
             pid=process.pid,
             command=self._command,
             returncode=returncode,
+            ready=running and config is not None and _server_ready(config),
             log_tail=_tail_log(),
         )
 
@@ -105,3 +110,14 @@ def _tail_log(path: Path = _VLLM_LOG_PATH, *, max_bytes: int = 4000) -> str:
         size = fh.tell()
         fh.seek(max(0, size - max_bytes))
         return fh.read().decode("utf-8", errors="replace")
+
+
+def _server_ready(config: RunConfig, *, timeout: float = 0.5) -> bool:
+    host = "127.0.0.1" if config.vllm_host in {"0.0.0.0", "::"} else config.vllm_host
+    url = f"http://{host}:{config.vllm_port}/v1/models"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            status = int(response.status)
+            return 200 <= status < 500
+    except (OSError, urllib.error.URLError):
+        return False

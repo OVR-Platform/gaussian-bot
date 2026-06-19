@@ -27,6 +27,8 @@ PAGE_HTML = """<!doctype html>
   .chip { padding: 3px 8px; border-radius: 999px; background: #333; font-size: 12px; }
   pre#reason { white-space: pre-wrap; max-height: 140px; overflow: auto; font-size: 11px;
                background: rgba(0,0,0,.3); padding: 8px; border-radius: 6px; }
+  pre#vllm-log { white-space: pre-wrap; max-height: 160px; overflow: auto; font-size: 11px;
+                 background: rgba(0,0,0,.3); padding: 8px; border-radius: 6px; }
   canvas#world-map { width: 100%; aspect-ratio: 1/1; border-radius: 6px; background: #111; }
   @media (max-width: 900px) {
     body { grid-template-columns: 1fr; }
@@ -55,7 +57,9 @@ PAGE_HTML = """<!doctype html>
   <div class="row">
     <button onclick="startVLLM()" class="ghost">Start vLLM</button>
     <button onclick="stopVLLM()" class="ghost">Stop vLLM</button>
+    <button onclick="refreshVLLM()" class="ghost">vLLM status</button>
   </div>
+  <pre id="vllm-log">vLLM log idle</pre>
   <h2>Scene &amp; exploration</h2>
   <label>up axis</label>
   <select id="up_axis"><option>y</option><option>x</option><option>z</option></select>
@@ -144,11 +148,23 @@ async function startVLLM(){
   await saveConfig();
   setStatus("starting vLLM...");
   const r = await fetch("/api/vllm/start",{method:"POST"}).then(r=>r.json());
-  setStatus(r.ok ? `vLLM running pid ${r.pid}` : `vLLM failed: ${r.error}${r.log_tail ? " — see " + r.log_path : ""}`);
+  showVLLM(r);
 }
 async function stopVLLM(){
   const r = await fetch("/api/vllm/stop",{method:"POST"}).then(r=>r.json());
-  setStatus(r.running ? `vLLM running pid ${r.pid}` : "vLLM stopped");
+  showVLLM(r);
+}
+async function refreshVLLM(){
+  const r = await fetch("/api/vllm/status").then(r=>r.json());
+  showVLLM(r);
+}
+function showVLLM(r){
+  const state = r.ready ? "ready" : (r.running ? "starting" : "stopped");
+  const pid = r.pid ? ` pid ${r.pid}` : "";
+  const code = r.returncode === null || r.returncode === undefined ? "" : ` exit ${r.returncode}`;
+  const path = r.log_path ? `\n\nlog: ${r.log_path}` : "";
+  document.getElementById("vllm-log").textContent = (r.log_tail || "no vLLM log yet") + path;
+  setStatus(`vLLM ${state}${pid}${code}`);
 }
 function setStatus(t){ document.getElementById("status").textContent = t; }
 function setChips(o){ document.getElementById("chips").innerHTML =

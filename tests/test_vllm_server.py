@@ -7,7 +7,12 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 from gaussian_robot.config import RunConfig
-from gaussian_robot.vlm.server import VLLMServerProcess, _vllm_executable, vllm_command
+from gaussian_robot.vlm.server import (
+    VLLMServerProcess,
+    _server_ready,
+    _vllm_executable,
+    vllm_command,
+)
 
 
 def test_vllm_command_uses_configured_model_host_and_port() -> None:
@@ -48,5 +53,12 @@ def test_vllm_start_reports_immediate_exit(tmp_path: Path, monkeypatch: MonkeyPa
     status = VLLMServerProcess().start(RunConfig())
 
     assert not status.running
+    assert not status.ready
     assert status.returncode == 42
     assert "startup failed" in status.log_tail
+
+
+def test_vllm_ready_is_false_when_models_endpoint_is_unreachable() -> None:
+    config = RunConfig(vllm_host="0.0.0.0", vllm_port=9)
+
+    assert not _server_ready(config, timeout=0.01)
