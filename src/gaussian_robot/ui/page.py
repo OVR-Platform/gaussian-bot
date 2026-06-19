@@ -97,7 +97,7 @@ PAGE_HTML = """<!doctype html>
   <div class="views" style="grid-template-columns:repeat(4,1fr);">
     <figure><figcaption>rgb view</figcaption><img id="rgb" class="panel"/></figure>
     <figure><figcaption>depth</figcaption><img id="depth" class="panel"/></figure>
-    <figure><figcaption>confidence</figcaption><img id="confidence" class="panel"/></figure>
+    <figure><figcaption>opacity (holes = dark)</figcaption><img id="confidence" class="panel"/></figure>
     <figure><figcaption>map (body-fixed)</figcaption><img id="body-map" class="panel"/></figure>
   </div>
   <h2>Global coverage (world frame)</h2>
@@ -195,10 +195,10 @@ function drawWorld(ctx, sampled, trail, pose){
   ctx.strokeStyle="#666"; ctx.lineWidth=1;
   ctx.strokeRect(tx(lo[0]),ty(hi[1]),tx(hi[0])-tx(lo[0]),ty(lo[1])-ty(hi[1]));
   ctx.fillStyle="#285ad0";
-  (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[a]),ty(p[b]),2,0,7); ctx.fill(); });
+  (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[0]),ty(p[1]),2,0,7); ctx.fill(); });
   if(trail && trail.length>1){
     ctx.strokeStyle="#2aa846"; ctx.lineWidth=2; ctx.beginPath();
-    trail.forEach((p,i)=>{ const x=tx(p[a]),y=ty(p[b]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
+    trail.forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
   }
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
 }

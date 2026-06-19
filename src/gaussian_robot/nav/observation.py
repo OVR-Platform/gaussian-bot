@@ -68,7 +68,7 @@ class ObservationBuilder:
         "Panels:\n"
         "- [rgb] your current camera view\n"
         "- [depth] distance map (bright = near, dark = far)\n"
-        "- [confidence] reconstruction quality (GREEN = solid, RED = holes/gaps "
+        "- [confidence] render opacity (bright = solid coverage, dark = holes/gaps "
         "that need more coverage)\n"
         "- [map] top-down map rotating with you. Background shows reconstruction "
         "density (red = sparse/gaps, green = dense/good). Blue dots = visited, "
@@ -76,8 +76,8 @@ class ObservationBuilder:
         "RULES:\n"
         "- Your primary action should be FORWARD. Always move forward if the "
         "path is clear.\n"
-        "- Turn to face RED areas in the confidence panel or map — those are "
-        "gaps that need exploration.\n"
+        "- Turn to face DARK areas in the confidence panel or RED areas in the "
+        "map — those are gaps that need exploration.\n"
         "- Vary your direction. Do NOT keep going straight forever. Alternate: "
         "forward several steps, then turn to explore a new corridor.\n"
         "- Use back if you are too close to a wall (depth panel mostly bright).\n"
@@ -129,14 +129,12 @@ class ObservationBuilder:
 
     @staticmethod
     def _confidence_panel(alpha: np.ndarray | None) -> np.ndarray:
-        """Render alpha as a confidence heatmap: green = solid, red = holes."""
+        """Render alpha as an opacity map: bright = covered, dark = holes."""
         if alpha is None:
             return np.zeros((512, 512, 3), dtype=np.uint8)
         h, w = alpha.shape
-        panel = np.zeros((h, w, 3), dtype=np.uint8)
-        panel[:, :, 0] = ((1.0 - alpha) * 255).clip(0, 255).astype(np.uint8)
-        panel[:, :, 1] = (alpha * 200).clip(0, 255).astype(np.uint8)
-        return panel
+        gray = (alpha * 255).clip(0, 255).astype(np.uint8)
+        return np.stack([gray, gray, gray], axis=-1)
 
     def _state_line(self, pose: Pose, step: int, budget: int) -> str:
         step_str = f"{step}/{budget}" if budget > 0 else str(step)
@@ -157,10 +155,10 @@ class ObservationBuilder:
 
         lo, hi = db
         g = density_grid.shape[0]
+        d = np.sqrt(density_grid)
         hm = np.zeros((g, g, 3), dtype=np.uint8)
-        hm[:, :, 0] = ((1.0 - density_grid) * 180).clip(0, 255).astype(np.uint8)
-        hm[:, :, 1] = (density_grid * 120 + 60).clip(0, 255).astype(np.uint8)
-        hm[:, :, 2] = 40
+        hm[:, :, 1] = (d * 200).clip(0, 255).astype(np.uint8)
+        hm[:, :, 0] = (((1.0 - d) ** 2) * 160).clip(0, 255).astype(np.uint8)
         # density_grid axes are [x_bin, z_bin]; image needs [row=z, col=x]
         hm = np.transpose(hm, (1, 0, 2))[::-1].copy()
 
@@ -184,7 +182,7 @@ class ObservationBuilder:
         cx = (cur_floor[0] - lo[0]) / world_w * bw
         cy = (1.0 - (cur_floor[1] - lo[2]) / world_h) * bh
         # Rotate around agent so heading points up
-        rotated = big.rotate(heading_deg, center=(cx, cy), expand=True, fillcolor=(180, 60, 40))
+        rotated = big.rotate(heading_deg, center=(cx, cy), expand=True, fillcolor=(0, 0, 0))
         rw, rh = rotated.size
         new_cx = rw / 2 + (cx - bw / 2)
         new_cy = rh / 2 + (cy - bh / 2)
@@ -212,7 +210,7 @@ class ObservationBuilder:
         fwd2 = floor_xy(fwd3, self.up_axis)[0]
         n2 = float(np.linalg.norm(fwd2))
         fwd2 = np.array([1.0, 0.0]) if n2 < 1e-9 else fwd2 / n2
-        right2 = np.array([-fwd2[1], fwd2[0]])
+        right2 = np.array([fwd2[1], -fwd2[0]])
 
         def to_pixel(p_floor: np.ndarray) -> tuple[float, float]:
             dp = p_floor - cur_floor
