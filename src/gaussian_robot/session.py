@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
+from gaussian_robot.backends.ply_point import PLYPointRenderer
 from gaussian_robot.config import RunConfig
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import ActionSpace
@@ -27,6 +28,7 @@ from gaussian_robot.nav.stop import (
     SessionStopPolicy,
     StopPolicy,
 )
+from gaussian_robot.render.base import Renderer
 from gaussian_robot.render.camera import Pose
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
 from gaussian_robot.vlm.client import VLMClient
@@ -94,6 +96,12 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     """
     bmin = np.array(config.bounds_min, dtype=np.float64)
     bmax = np.array(config.bounds_max, dtype=np.float64)
+    renderer: Renderer = FakeRenderer()
+    if config.ply_path:
+        ply_renderer = PLYPointRenderer.from_path(config.ply_path)
+        renderer = ply_renderer
+        bmin = ply_renderer.cloud.bounds.min
+        bmax = ply_renderer.cloud.bounds.max
     diag = float(np.linalg.norm(bmax - bmin))
     if diag <= 0:
         raise ValueError("bounds_max must exceed bounds_min")
@@ -106,7 +114,6 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         bounds=SceneBounds(min=bmin, max=bmax),
         up_axis=config.up_axis,
     )
-    renderer = FakeRenderer()
     vlm = build_vlm(config)
     builder = ObservationBuilder(
         renderer=renderer, up_axis=config.up_axis, map_size=config.map_size
