@@ -35,7 +35,7 @@ vlm = [
 ]
 # Opt-in: local OpenAI-compatible vLLM server.
 vllm = [
-    "vllm>=0.10",
+    "vllm>=0.10,<0.11",
 ]
 # Opt-in: everything for development
 dev = [
@@ -93,6 +93,7 @@ strict = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 files = ["src", "tests"]
+disable_error_code = ["type-arg"]
 [[tool.mypy.overrides]]
 module = ["gsplat.*", "httpx.*", "torch.*"]
 ignore_missing_imports = true
