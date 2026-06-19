@@ -118,6 +118,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except RuntimeError as exc:
             self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
+        if not status.running:
+            self._send_json(
+                {
+                    "ok": False,
+                    "error": f"vLLM exited during startup with code {status.returncode}",
+                    **_status_payload(status),
+                },
+                status=HTTPStatus.BAD_REQUEST,
+            )
+            return
         self._send_json({"ok": True, **_status_payload(status)})
 
     def _write_sse(self, message: dict[str, Any]) -> None:
@@ -164,4 +174,6 @@ def _status_payload(status: VLLMStatus) -> dict[str, Any]:
         "pid": status.pid,
         "command": status.command,
         "returncode": status.returncode,
+        "log_path": status.log_path,
+        "log_tail": status.log_tail,
     }

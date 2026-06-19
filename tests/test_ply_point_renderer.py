@@ -69,8 +69,9 @@ def test_build_session_uses_ply_renderer_when_path_is_set(tmp_path: Path) -> Non
     ply = tmp_path / "scene.ply"
     _write_ascii_ply(ply)
 
-    explorer, _seeds, coverage = build_session(RunConfig(ply_path=str(ply)))
+    explorer, seeds, coverage = build_session(RunConfig(ply_path=str(ply)))
 
     assert isinstance(explorer.renderer, PLYPointRenderer)
     assert np.allclose(coverage.bounds_min, [-0.2, 0.0, 3.0])
     assert np.allclose(coverage.bounds_max, [0.2, 0.0, 5.0])
+    assert all(explorer.scene.bounds.contains(seed.position) for seed in seeds)

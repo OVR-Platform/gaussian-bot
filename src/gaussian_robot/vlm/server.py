@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ from gaussian_robot.config import RunConfig
 _VLLM_INSTALL_HINT = (
     "Run `uv sync --extra vlm --extra vllm` on this machine, then restart the dashboard."
 )
+_VLLM_LOG_PATH = Path("data/vllm.log")
 
 
 @dataclass(frozen=True)
@@ -23,6 +25,8 @@ class VLLMStatus:
     pid: int | None
     command: list[str]
     returncode: int | None = None
+    log_path: str = str(_VLLM_LOG_PATH)
+    log_tail: str = ""
 
 
 class VLLMServerProcess:
@@ -38,9 +42,8 @@ class VLLMServerProcess:
             return self.status()
 
         command = vllm_command(config)
-        log_path = Path("data/vllm.log")
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_file = log_path.open("ab")
+        _VLLM_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        log_file = _VLLM_LOG_PATH.open("ab")
         try:
             self._process = subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT)
         except FileNotFoundError as exc:
@@ -48,6 +51,7 @@ class VLLMServerProcess:
         finally:
             log_file.close()
         self._command = command
+        time.sleep(1.0)
         return self.status()
 
     def stop(self) -> VLLMStatus:
@@ -59,13 +63,14 @@ class VLLMServerProcess:
     def status(self) -> VLLMStatus:
         process = self._process
         if process is None:
-            return VLLMStatus(running=False, pid=None, command=self._command)
+            return VLLMStatus(running=False, pid=None, command=self._command, log_tail=_tail_log())
         returncode = process.poll()
         return VLLMStatus(
             running=returncode is None,
             pid=process.pid,
             command=self._command,
             returncode=returncode,
+            log_tail=_tail_log(),
         )
 
 
@@ -90,3 +95,13 @@ def _vllm_executable(candidates: Sequence[Path] | None = None) -> str:
             return str(candidate)
     found = which("vllm")
     return found or "vllm"
+
+
+def _tail_log(path: Path = _VLLM_LOG_PATH, *, max_bytes: int = 4000) -> str:
+    if not path.exists():
+        return ""
+    with path.open("rb") as fh:
+        fh.seek(0, 2)
+        size = fh.tell()
+        fh.seek(max(0, size - max_bytes))
+        return fh.read().decode("utf-8", errors="replace")

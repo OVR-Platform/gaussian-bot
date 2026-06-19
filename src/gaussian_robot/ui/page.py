@@ -144,7 +144,7 @@ async function startVLLM(){
   await saveConfig();
   setStatus("starting vLLM...");
   const r = await fetch("/api/vllm/start",{method:"POST"}).then(r=>r.json());
-  setStatus(r.ok ? `vLLM running pid ${r.pid}` : `vLLM failed: ${r.error}`);
+  setStatus(r.ok ? `vLLM running pid ${r.pid}` : `vLLM failed: ${r.error}${r.log_tail ? " — see " + r.log_path : ""}`);
 }
 async function stopVLLM(){
   const r = await fetch("/api/vllm/stop",{method:"POST"}).then(r=>r.json());

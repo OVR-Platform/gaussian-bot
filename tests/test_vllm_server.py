@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
 from gaussian_robot.config import RunConfig
-from gaussian_robot.vlm.server import _vllm_executable, vllm_command
+from gaussian_robot.vlm.server import VLLMServerProcess, _vllm_executable, vllm_command
 
 
 def test_vllm_command_uses_configured_model_host_and_port() -> None:
@@ -34,3 +36,17 @@ def test_vllm_executable_prefers_project_venv(tmp_path: Path) -> None:
     vllm.touch()
 
     assert _vllm_executable([vllm]) == str(vllm)
+
+
+def test_vllm_start_reports_immediate_exit(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+    fake = tmp_path / "vllm"
+    fake.write_text("#!/bin/sh\necho startup failed\nexit 42\n")
+    fake.chmod(0o755)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", str(tmp_path))
+
+    status = VLLMServerProcess().start(RunConfig())
+
+    assert not status.running
+    assert status.returncode == 42
+    assert "startup failed" in status.log_tail

@@ -55,10 +55,12 @@ def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
     return np.stack([right, down, forward], axis=0)
 
 
-def generate_seeds(config: RunConfig) -> list[Pose]:
+def generate_seeds(
+    config: RunConfig, bounds_min: np.ndarray | None = None, bounds_max: np.ndarray | None = None
+) -> list[Pose]:
     """Spread ``num_seeds`` interior poses, each aimed at the scene centre."""
-    bmin = np.array(config.bounds_min, dtype=np.float64)
-    bmax = np.array(config.bounds_max, dtype=np.float64)
+    bmin = np.array(config.bounds_min if bounds_min is None else bounds_min, dtype=np.float64)
+    bmax = np.array(config.bounds_max if bounds_max is None else bounds_max, dtype=np.float64)
     up_idx = _UP_INDEX[config.up_axis]
     a, b = _FLOOR_AXES[config.up_axis]
     center = (bmin + bmax) / 2.0
@@ -140,4 +142,4 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         max_steps=config.max_steps,
     )
     coverage = CoverageState.empty(config.up_axis, bmin, bmax)
-    return explorer, generate_seeds(config), coverage
+    return explorer, generate_seeds(config, bmin, bmax), coverage
