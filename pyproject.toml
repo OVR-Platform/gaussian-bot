@@ -20,6 +20,9 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.7",
     "pillow>=10.3",
+    "packaging>=26.2",
+    "httpx>=0.28.1",
+    "certifi>=2026.6.17",
 ]
 
 [project.optional-dependencies]

@@ -48,6 +48,9 @@ class RunConfig(BaseModel):
     pose_budget: int = Field(default=200, ge=1)
     num_seeds: int = Field(default=5, ge=1)
     map_size: int = Field(default=512, ge=64)
+    task_prompt: str = Field(
+        default="", description="Optional task for the robot, e.g. 'find the office door'."
+    )
 
     @field_validator("up_axis")
     @classmethod

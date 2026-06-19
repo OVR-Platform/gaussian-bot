@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -10,13 +11,15 @@ from typing import Any
 from pydantic import ValidationError
 
 from gaussian_robot.config import load_config, save_config
-from gaussian_robot.events import SessionEvent
-from gaussian_robot.session import build_session
+from gaussian_robot.events import SessionEvent, StepEvent
+from gaussian_robot.session import animate_forward, build_session, load_preview
 from gaussian_robot.ui.page import PAGE_HTML
 from gaussian_robot.ui.serialize import event_to_message
 from gaussian_robot.vlm.server import VLLMServerProcess, VLLMStatus
 
 _VLLM = VLLMServerProcess()
+_step_gate = threading.Event()
+_step_mode = False
 
 
 def serve_dashboard(host: str, port: int, *, start_vllm: bool = False) -> None:
@@ -58,12 +61,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/api/vllm/status":
             self._send_json(_status_payload(_VLLM.status(load_config())))
             return
+        if self.path == "/api/load":
+            self._load_scene()
+            return
+        if self.path == "/api/animate-forward":
+            self._animate_forward()
+            return
         if self.path == "/api/run":
-            self._stream_run()
+            self._stream_run(step_mode=False)
+            return
+        if self.path == "/api/run/stepping":
+            self._stream_run(step_mode=True)
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/api/step/next":
+            _step_gate.set()
+            self._send_json({"ok": True})
+            return
         if self.path == "/api/vllm/start":
             self._start_vllm()
             return
@@ -87,7 +103,26 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         return
 
-    def _stream_run(self) -> None:
+    def _load_scene(self) -> None:
+        try:
+            result = load_preview(load_config())
+            self._send_json(result)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+    def _animate_forward(self) -> None:
+        try:
+            result = animate_forward(load_config())
+            self._send_json(result)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+
+    def _stream_run(self, *, step_mode: bool) -> None:
+        global _step_mode  # noqa: PLW0603
+        _step_mode = step_mode
+        if step_mode:
+            _step_gate.clear()
+
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
@@ -96,6 +131,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         def emit(event: SessionEvent) -> None:
             self._write_sse(event_to_message(event))
+            if _step_mode and isinstance(event, StepEvent):
+                _step_gate.clear()
+                _step_gate.wait()
 
         try:
             config = load_config()
@@ -103,6 +141,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 _VLLM.start(config)
             explorer, seeds, coverage = build_session(config)
             explorer.event_sink = emit
+            if step_mode:
+                _step_gate.set()
             explorer.run_session(seeds, coverage)
         except BrokenPipeError:
             return
@@ -111,6 +151,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._write_sse({"type": "error", "message": str(exc)})
             except BrokenPipeError:
                 return
+        finally:
+            _step_mode = False
 
     def _start_vllm(self) -> None:
         try:

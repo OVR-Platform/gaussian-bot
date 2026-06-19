@@ -60,6 +60,9 @@ PAGE_HTML = """<!doctype html>
     <button onclick="refreshVLLM()" class="ghost">vLLM status</button>
   </div>
   <pre id="vllm-log">vLLM log idle</pre>
+  <h2>Task</h2>
+  <label>task prompt (optional)</label>
+  <input id="task_prompt" placeholder="e.g. find the office door"/>
   <h2>Scene &amp; exploration</h2>
   <label>up axis</label>
   <select id="up_axis"><option>y</option><option>x</option><option>z</option></select>
@@ -78,7 +81,13 @@ PAGE_HTML = """<!doctype html>
   </div>
   <div class="row">
     <button onclick="saveConfig()" class="ghost">Save config</button>
+    <button onclick="loadScene()" class="ghost">Load scene</button>
+  </div>
+  <div class="row">
     <button onclick="run()">Run session</button>
+    <button onclick="runStepping()" class="ghost">Step-by-step</button>
+    <button id="btn-next" onclick="nextStep()" class="ghost" disabled>Next step</button>
+    <button onclick="testForward()" class="ghost">Test forward</button>
   </div>
   <div id="status"></div>
 </section>
@@ -92,6 +101,9 @@ PAGE_HTML = """<!doctype html>
   </div>
   <h2>Global coverage (world frame)</h2>
   <canvas id="world-map" width="400" height="400"></canvas>
+  <h2>Action log</h2>
+  <pre id="action-log" style="white-space:pre-wrap;max-height:120px;overflow:auto;font-size:11px;
+       background:rgba(0,0,0,.3);padding:8px;border-radius:6px;">—</pre>
   <h2>VLM decision / reasoning</h2>
   <pre id="reason">—</pre>
 </section>
@@ -103,7 +115,7 @@ function floorAxes(up){ const all=[0,1,2]; const u={x:0,y:1,z:2}[up]; return all
 
 async function loadConfig(){
   const c = await fetch("/api/config").then(r=>r.json());
-  for (const k of ["ply_path","vlm_base_url","vlm_model","vllm_host"]) document.getElementById(k).value = c[k] ?? "";
+  for (const k of ["ply_path","vlm_base_url","vlm_model","vllm_host","task_prompt"]) document.getElementById(k).value = c[k] ?? "";
   document.getElementById("up_axis").value = c.up_axis;
   document.getElementById("use_real_vlm").checked = !!c.use_real_vlm;
   document.getElementById("start_vllm").checked = !!c.start_vllm;
@@ -122,6 +134,7 @@ function gather(){
   const splitArgs = v => v.trim() === "" ? [] : v.trim().split(/\s+/);
   const cr = document.getElementById("coverage_radius").value;
   return {
+    task_prompt: document.getElementById("task_prompt").value || "",
     ply_path: document.getElementById("ply_path").value || null,
     vlm_base_url: document.getElementById("vlm_base_url").value,
     vlm_model: document.getElementById("vlm_model").value,
@@ -177,8 +190,9 @@ function drawWorld(ctx, sampled, trail, pose){
   const W=ctx.canvas.width, H=ctx.canvas.height, pad=10;
   const tx = x => pad + (x-lo[0])/(hi[0]-lo[0])*(W-2*pad);
   const ty = y => pad + (1-(y-lo[1])/(hi[1]-lo[1]))*(H-2*pad);
-  ctx.clearRect(0,0,W,H);
-  ctx.strokeStyle="#444"; ctx.strokeRect(tx(lo[0]),ty(hi[1]),tx(hi[0])-tx(lo[0]),ty(lo[1])-ty(hi[1]));
+  ctx.fillStyle="#181818"; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle="#666"; ctx.lineWidth=1;
+  ctx.strokeRect(tx(lo[0]),ty(hi[1]),tx(hi[0])-tx(lo[0]),ty(lo[1])-ty(hi[1]));
   ctx.fillStyle="#285ad0";
   (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[a]),ty(p[b]),2,0,7); ctx.fill(); });
   if(trail && trail.length>1){
@@ -188,25 +202,73 @@ function drawWorld(ctx, sampled, trail, pose){
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
 }
 
-let stream=null;
-async function run(){
+let animTimer=null;
+async function testForward(){
+  if(animTimer){ clearInterval(animTimer); animTimer=null; }
+  setStatus("rendering forward animation...");
+  try {
+    const r = await fetch("/api/animate-forward").then(r=>r.json());
+    if(!r.ok){ setStatus("animate failed: "+(r.error||"unknown")); return; }
+    const frames = r.frames;
+    let i = 0;
+    setStatus(`forward animation: ${r.n_steps} steps, step_size=${r.step_size.toFixed(2)}`);
+    animTimer = setInterval(()=>{
+      document.getElementById("rgb").src = frames[i];
+      setChips({animation:`frame ${i+1}/${frames.length}`, step_size:r.step_size.toFixed(2)});
+      i++;
+      if(i >= frames.length){ i=0; }
+    }, 80);
+  } catch(e){ setStatus("animate error: "+e.message); }
+}
+
+async function loadScene(){
+  await saveConfig();
+  setStatus("loading scene...");
+  try {
+    const r = await fetch("/api/load").then(r=>r.json());
+    if(!r.ok){ setStatus("load failed: "+(r.error||"unknown")); return; }
+    document.getElementById("rgb").src = r.rgb;
+    if(r.depth) document.getElementById("depth").src = r.depth;
+    setChips({status:"loaded", renderer:r.renderer});
+    document.getElementById("bounds_min").value = r.bounds_min.join(",");
+    document.getElementById("bounds_max").value = r.bounds_max.join(",");
+    setStatus("scene loaded ("+r.renderer+")");
+  } catch(e){ setStatus("load error: "+e.message); }
+}
+
+let stream=null, stepping=false;
+async function nextStep(){
+  await fetch("/api/step/next",{method:"POST"});
+}
+function runStepping(){ stepping=true; run("/api/run/stepping"); }
+async function run(endpoint){
+  endpoint = endpoint || "/api/run";
   if(stream){ stream.close(); stream=null; }
   await saveConfig();
   setStatus("connecting..."); setChips({status:"connecting"});
-  stream = new EventSource("/api/run");
-  stream.onopen = ()=>setStatus("running");
+  document.getElementById("btn-next").disabled = !stepping;
+  stream = new EventSource(endpoint);
+  const vlmMode = document.getElementById("use_real_vlm").checked ? "live VLM" : "demo VLM";
+  stream.onopen = ()=>setStatus("running ("+vlmMode+")");
   stream.onmessage = (e)=>{
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
-      setChips({status:"running", seeds:m.total_seeds, up:UP}); return; }
+      document.getElementById("action-log").textContent="";
+      setChips({status:"running", vlm:vlmMode, seeds:m.total_seeds, up:UP}); return; }
     if(m.type==="session_end"){ setStatus("ended: "+m.reason); setChips({status:"ended",reason:m.reason,
-      steps:m.total_steps, poses:m.total_poses}); stream.close(); stream=null; return; }
-    if(m.type==="error"){ setStatus("error: "+m.message); setChips({status:"error"}); stream.close(); stream=null; return; }
+      steps:m.total_steps, poses:m.total_poses}); stream.close(); stream=null; stepping=false;
+      document.getElementById("btn-next").disabled=true; return; }
+    if(m.type==="error"){ setStatus("error: "+m.message); setChips({status:"error"}); stream.close(); stream=null;
+      stepping=false; document.getElementById("btn-next").disabled=true; return; }
     if(m.type==="step"){
       if(m.panels.rgb) document.getElementById("rgb").src=m.panels.rgb;
       if(m.panels.depth) document.getElementById("depth").src=m.panels.depth;
       if(m.panels.map) document.getElementById("body-map").src=m.panels.map;
       document.getElementById("reason").textContent = m.raw_text || m.action;
+      const log = document.getElementById("action-log");
+      const pos = m.pose.map(v=>v.toFixed(1)).join(",");
+      log.textContent += `[${m.seed_id} #${m.step}] ${m.action} → (${pos})  nov=${m.novelty.toFixed(2)}\n`;
+      log.scrollTop = log.scrollHeight;
       setChips({seed:m.seed_id, step:`${m.step}/${m.budget}`, action:m.action,
         novelty:m.novelty.toFixed(2), degenerate:m.degenerate?"!":"",
         "cov(floor)":(100*m.coverage_floor).toFixed(1)+"%",
@@ -214,7 +276,7 @@ async function run(){
       drawWorld(document.getElementById("world-map").getContext("2d"), m.sampled, m.trail, m.pose);
     }
   };
-  stream.onerror = ()=>setStatus("disconnected");
+  stream.onerror = ()=>{ setStatus("disconnected"); stepping=false; document.getElementById("btn-next").disabled=true; };
 }
 loadConfig();
 </script>

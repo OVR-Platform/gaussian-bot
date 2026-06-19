@@ -971,7 +971,10 @@ name = "gaussian-robot"
 version = "0.0.1"
 source = { editable = "." }
 dependencies = [
+    { name = "certifi" },
+    { name = "httpx" },
     { name = "numpy" },
+    { name = "packaging" },
     { name = "pillow" },
     { name = "pydantic" },
     { name = "rich" },
@@ -1003,11 +1006,14 @@ vlm = [
 
 [package.metadata]
 requires-dist = [
+    { name = "certifi", specifier = ">=2026.6.17" },
     { name = "gsplat", marker = "extra == 'gsplat'", specifier = ">=1.0" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", marker = "extra == 'vlm'", specifier = ">=0.27" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "openai", marker = "extra == 'vlm'", specifier = ">=1.30" },
+    { name = "packaging", specifier = ">=26.2" },
     { name = "pillow", specifier = ">=10.3" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7" },
     { name = "pydantic", specifier = ">=2.7" },

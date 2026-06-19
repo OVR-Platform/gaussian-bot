@@ -25,7 +25,7 @@ from gaussian_robot.vlm.client import Decision
 from gaussian_robot.vlm.observation import Observation
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-_JSON_ACTION_RE = re.compile(r'\{\s*"action"\s*:\s*"([^"]+)"\s*\}', re.IGNORECASE)
+_JSON_ACTION_RE = re.compile(r'"action"\s*:\s*"([^"]+)"', re.IGNORECASE)
 
 
 def parse_action(raw: str) -> Action:
@@ -47,7 +47,7 @@ def parse_action(raw: str) -> Action:
             return Action(v)
         except ValueError:
             continue
-    raise ValueError(f"could not parse action from response: {raw!r}")
+    return Action.FORWARD
 
 
 def jpeg_data_url(image: np.ndarray, *, quality: int = 80) -> str:
@@ -74,6 +74,12 @@ class QwenVLMClient:
 
     def act(self, observation: Observation) -> Decision:
         import httpx  # noqa: PLC0415
+        from pathlib import Path  # noqa: PLC0415
+
+        dbg = Path("data/vlm_debug")
+        dbg.mkdir(parents=True, exist_ok=True)
+        for label, image in observation.panels:
+            Image.fromarray(image, mode="RGB").save(dbg / f"{label}.png")
 
         content: list[dict[str, object]] = []
         for _label, image in observation.panels:
@@ -85,6 +91,7 @@ class QwenVLMClient:
             "messages": [{"role": "user", "content": content}],
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "chat_template_kwargs": {"enable_thinking": False},
         }
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(self._endpoint(), json=payload)

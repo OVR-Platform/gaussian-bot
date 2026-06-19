@@ -13,7 +13,6 @@ from pathlib import Path
 import numpy as np
 
 from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
-from gaussian_robot.backends.ply_point import PLYPointRenderer
 from gaussian_robot.config import RunConfig
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import ActionSpace
@@ -36,6 +35,109 @@ from gaussian_robot.vlm.client import VLMClient
 _UP_INDEX = {"x": 0, "y": 1, "z": 2}
 _FLOOR_AXES = {"x": (1, 2), "y": (0, 2), "z": (0, 1)}
 
+_cached_renderer: tuple[str, object] | None = None
+
+
+def _load_renderer(ply_path: str) -> tuple[Renderer, np.ndarray, np.ndarray]:
+    """Load the best available renderer for a PLY file (gsplat > point cloud).
+
+    Returns (renderer, bounds_min, bounds_max). Caches the renderer so
+    repeated calls with the same path reuse the GPU tensors.
+    """
+    global _cached_renderer  # noqa: PLW0603
+    if _cached_renderer is not None and _cached_renderer[0] == ply_path:
+        r = _cached_renderer[1]
+        bounds = r.cloud.bounds  # type: ignore[union-attr]
+        return r, bounds.min, bounds.max  # type: ignore[return-value]
+
+    try:
+        from gaussian_robot.backends.gsplat_renderer import GsplatRenderer  # noqa: PLC0415
+
+        gsplat_r = GsplatRenderer.from_path(ply_path)
+        _cached_renderer = (ply_path, gsplat_r)
+        return gsplat_r, gsplat_r.cloud.bounds.min, gsplat_r.cloud.bounds.max
+    except (ImportError, ValueError):
+        pass
+
+    from gaussian_robot.backends.ply_point import PLYPointRenderer  # noqa: PLC0415
+
+    ply_r = PLYPointRenderer.from_path(ply_path)
+    _cached_renderer = (ply_path, ply_r)
+    return ply_r, ply_r.cloud.bounds.min, ply_r.cloud.bounds.max
+
+
+def load_preview(config: RunConfig) -> dict[str, object]:
+    """Load the scene and render a single preview frame.
+
+    Returns a dict with ``rgb`` (JPEG data URL), ``bounds_min``, ``bounds_max``,
+    and renderer info.
+    """
+    from gaussian_robot.vlm.qwen import jpeg_data_url  # noqa: PLC0415
+
+    if not config.ply_path:
+        raise ValueError("no ply_path configured")
+    renderer, bmin, bmax = _load_renderer(config.ply_path)
+
+    from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
+
+    # Use full bounds center for preview — percentile center can be inside walls.
+    full_center = (bmin + bmax) / 2.0
+    if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
+        fb = renderer.cloud.full_bounds
+        full_center = (fb.min + fb.max) / 2.0
+    cam_pos = full_center.copy()
+    rot = look_at(cam_pos, full_center, config.up_axis)
+    pose = Pose(position=cam_pos, rotation=rot)
+    intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
+    camera = Camera(pose=pose, intrinsics=intrinsics)
+
+    from gaussian_robot.nav.observation import depth_to_uint8  # noqa: PLC0415
+
+    result = renderer.render(camera)  # type: ignore[union-attr]
+    depth_panel = depth_to_uint8(result.depth)
+    return {
+        "rgb": jpeg_data_url(result.rgb),
+        "depth": jpeg_data_url(depth_panel),
+        "bounds_min": bmin.tolist(),
+        "bounds_max": bmax.tolist(),
+        "renderer": type(renderer).__name__,
+        "ok": True,
+    }
+
+
+def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> dict[str, object]:
+    """Render an animation of ``n_steps`` forward steps, interpolated into ``n_frames`` per step."""
+    from gaussian_robot.nav.action import ActionSpace, Action, apply_action  # noqa: PLC0415
+    from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
+    from gaussian_robot.vlm.qwen import jpeg_data_url  # noqa: PLC0415
+
+    if not config.ply_path:
+        raise ValueError("no ply_path configured")
+    renderer, bmin, bmax = _load_renderer(config.ply_path)
+    diag = float(np.linalg.norm(bmax - bmin))
+    space = ActionSpace(step=config.action_step_fraction * diag)
+    intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
+
+    full_center = (bmin + bmax) / 2.0
+    if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
+        fb = renderer.cloud.full_bounds
+        full_center = (fb.min + fb.max) / 2.0
+
+    pose = Pose(position=full_center.copy(), rotation=look_at(full_center, full_center, config.up_axis))
+    frames: list[str] = []
+
+    for step_i in range(n_steps):
+        next_pose = apply_action(pose, Action.FORWARD, space, config.up_axis)
+        for f in range(n_frames):
+            t = f / max(n_frames - 1, 1)
+            pos = pose.position * (1 - t) + next_pose.position * t
+            cam = Camera(pose=Pose(position=pos, rotation=pose.rotation), intrinsics=intrinsics)
+            result = renderer.render(cam)  # type: ignore[union-attr]
+            frames.append(jpeg_data_url(result.rgb))
+        pose = next_pose
+
+    return {"frames": frames, "ok": True, "step_size": space.step, "n_steps": n_steps}
+
 
 def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
     """World->camera rotation (OpenCV) whose camera sits at ``origin`` looking at ``target``."""
@@ -56,29 +158,36 @@ def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
 
 
 def generate_seeds(
-    config: RunConfig, bounds_min: np.ndarray | None = None, bounds_max: np.ndarray | None = None
+    config: RunConfig,
+    bounds_min: np.ndarray | None = None,
+    bounds_max: np.ndarray | None = None,
+    origin: np.ndarray | None = None,
 ) -> list[Pose]:
-    """Spread ``num_seeds`` interior poses, each aimed at the scene centre."""
+    """Generate seed pose candidates spread across the scene.
+
+    Produces a grid of positions inside the bounds (like the original), plus
+    extra candidates at ``origin`` facing different directions. The caller
+    should validate these with a test render and drop degenerate ones.
+    """
+    a, b = _FLOOR_AXES[config.up_axis]
     bmin = np.array(config.bounds_min if bounds_min is None else bounds_min, dtype=np.float64)
     bmax = np.array(config.bounds_max if bounds_max is None else bounds_max, dtype=np.float64)
-    up_idx = _UP_INDEX[config.up_axis]
-    a, b = _FLOOR_AXES[config.up_axis]
-    center = (bmin + bmax) / 2.0
+    safe_origin = (bmin + bmax) / 2.0 if origin is None else origin.copy()
 
-    side = max(1, math.ceil(math.sqrt(config.num_seeds)))
-    seeds: list[Pose] = []
-    for i in range(side):
-        for j in range(side):
-            if len(seeds) >= config.num_seeds:
-                break
-            fa = (i + 1) / (side + 1)
-            fb = (j + 1) / (side + 1)
-            pos = center.copy()
-            pos[a] = bmin[a] + fa * (bmax[a] - bmin[a])
-            pos[b] = bmin[b] + fb * (bmax[b] - bmin[b])
-            pos[up_idx] = center[up_idx]
-            seeds.append(Pose(position=pos, rotation=look_at(pos, center, config.up_axis)))
-    return seeds
+    # All seeds from the known-good origin, facing different directions.
+    # The exploration walks will move the robot to other positions.
+    n_candidates = max(config.num_seeds * 2, 8)
+    candidates: list[Pose] = []
+    for i in range(n_candidates):
+        angle = 2.0 * math.pi * i / n_candidates
+        target = safe_origin.copy()
+        target[a] += math.cos(angle)
+        target[b] += math.sin(angle)
+        candidates.append(
+            Pose(position=safe_origin.copy(), rotation=look_at(safe_origin, target, config.up_axis))
+        )
+
+    return candidates
 
 
 def build_vlm(config: RunConfig) -> VLMClient:
@@ -100,10 +209,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     bmax = np.array(config.bounds_max, dtype=np.float64)
     renderer: Renderer = FakeRenderer()
     if config.ply_path:
-        ply_renderer = PLYPointRenderer.from_path(config.ply_path)
-        renderer = ply_renderer
-        bmin = ply_renderer.cloud.bounds.min
-        bmax = ply_renderer.cloud.bounds.max
+        renderer, bmin, bmax = _load_renderer(config.ply_path)
     diag = float(np.linalg.norm(bmax - bmin))
     if diag <= 0:
         raise ValueError("bounds_max must exceed bounds_min")
@@ -118,7 +224,8 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     )
     vlm = build_vlm(config)
     builder = ObservationBuilder(
-        renderer=renderer, up_axis=config.up_axis, map_size=config.map_size
+        renderer=renderer, up_axis=config.up_axis, map_size=config.map_size,
+        task=config.task_prompt,
     )
 
     walk_policies: list[StopPolicy] = [
@@ -141,5 +248,31 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         session_policies=session_policies,
         max_steps=config.max_steps,
     )
+    # Use the full-bounds center as seed origin — it's a known open-space position.
+    seed_origin = (bmin + bmax) / 2.0
+    if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
+        fb = renderer.cloud.full_bounds
+        seed_origin = (fb.min + fb.max) / 2.0
+
+    from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
+
+    intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
+    candidates = generate_seeds(config, bmin, bmax, origin=seed_origin)
+    seeds: list[Pose] = []
+    for s in candidates:
+        if len(seeds) >= config.num_seeds:
+            break
+        result = renderer.render(Camera(pose=s, intrinsics=intrinsics))
+        if result.depth is None:
+            continue
+        finite_frac = float(np.isfinite(result.depth).mean())
+        near = result.depth[np.isfinite(result.depth)]
+        median_depth = float(np.median(near)) if near.size > 0 else 0.0
+        if finite_frac < 0.5 or median_depth < space.step:
+            continue
+        seeds.append(s)
+    if not seeds:
+        seeds = [candidates[0]]
+
     coverage = CoverageState.empty(config.up_axis, bmin, bmax)
-    return explorer, generate_seeds(config, bmin, bmax), coverage
+    return explorer, seeds, coverage

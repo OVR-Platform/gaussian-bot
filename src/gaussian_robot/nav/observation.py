@@ -61,17 +61,22 @@ class ObservationBuilder:
     up_axis: str = "y"
     map_size: int = 512
     map_span: float | None = None
+    task: str = ""
     prompt: str = (
-        "You are exploring a 3D scene to propose new camera viewpoints in "
-        "under-sampled regions.\n"
-        "Panels: [rgb] your current view; [depth] how far surfaces are "
-        "(bright = near); [map] a top-down map that rotates with you — blue "
-        "dots = already-sampled poses, green line = your trail this walk, red "
-        "arrow = you and your heading (up = forward).\n"
-        "Steer toward large empty regions, avoid your green trail, and emit "
-        '"stop" only when your surroundings look well-covered.\n'
-        'Reply with JSON: {"action": <one of '
-        "forward|back|turn_left|turn_right|look_up|look_down|stop>}."
+        "You are a robot exploring a 3D indoor scene. Your goal is to MOVE "
+        "through the space and visit as many areas as possible.\n"
+        "Panels: [rgb] your current view; [depth] distance to surfaces "
+        "(bright = near, dark = far); [map] top-down map rotating with you — "
+        "blue dots = visited poses, green line = your trail, red arrow = you "
+        "(up = forward).\n"
+        "RULES:\n"
+        "- PREFER forward. Move forward whenever the path ahead is clear.\n"
+        "- Use turn_left or turn_right to face open space, then forward.\n"
+        "- Avoid going back the way you came (your green trail).\n"
+        "- Only use stop when the area is fully explored.\n"
+        "- Do NOT just look around — you must MOVE to explore.\n"
+        '- If you are near a wall, use back to retreat, then turn.\n'
+        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|stop>"}.'
     )
 
     def build(
@@ -82,6 +87,7 @@ class ObservationBuilder:
         *,
         step: int = 0,
         budget: int = 0,
+        action_history: list[str] | None = None,
     ) -> tuple[Observation, RenderResult]:
         """Render the view and assemble the observation.
 
@@ -93,13 +99,22 @@ class ObservationBuilder:
         depth_panel = depth_to_uint8(result.depth)
         map_panel = self._body_frame_map(coverage, camera.pose, trail)
         state_line = self._state_line(camera.pose, step, budget)
+
+        parts = [self.prompt]
+        if self.task:
+            parts.append(f"TASK: {self.task}")
+        if action_history:
+            recent = action_history[-8:]
+            parts.append(f"[history] last actions: {', '.join(recent)}")
+        parts.append(state_line)
+
         obs = Observation(
             panels=[
                 ("rgb", result.rgb),
                 ("depth", depth_panel),
                 ("map", map_panel),
             ],
-            prompt=self.prompt + "\n" + state_line,
+            prompt="\n".join(parts),
         )
         return obs, result
 

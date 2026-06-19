@@ -120,14 +120,36 @@ class Explorer:
             WalkStep(pose=seed_pose, action=Action.STOP, novelty=novelty_seed, degenerate=False)
         )
 
+        stuck_counter = 0
+        action_history: list[str] = []
         for step_idx in range(self.max_steps):
             camera = robot.camera()
             observation, render = self.observation_builder.build(
-                camera, coverage, trail, step=step_idx + 1, budget=self.max_steps
+                camera, coverage, trail, step=step_idx + 1, budget=self.max_steps,
+                action_history=action_history,
             )
             decision = self.vlm.act(observation)
             action = decision.action
 
+            if action not in (Action.FORWARD, Action.BACK, Action.STOP):
+                stuck_counter += 1
+            else:
+                stuck_counter = 0
+            if stuck_counter >= 3:
+                action = Action.FORWARD
+                stuck_counter = 0
+
+            # Collision check: if moving forward/back, sample depth from the
+            # horizontal band of the image (middle rows, full width) which
+            # corresponds to the floor-level path regardless of camera pitch.
+            if action in (Action.FORWARD, Action.BACK) and render.depth is not None:
+                h, w = render.depth.shape
+                horizon_band = render.depth[2 * h // 5 : 3 * h // 5, :]
+                finite = horizon_band[np.isfinite(horizon_band)]
+                if finite.size > 0 and float(np.median(finite)) < self.action_space.step * 1.5:
+                    action = Action.BACK
+
+            action_history.append(action.value)
             next_pose = apply_action(robot.pose, action, self.action_space, self.scene.up_axis)
             novelty_next = coverage.novelty(next_pose)
             degenerate = self._is_degenerate(next_pose, render)
@@ -152,7 +174,7 @@ class Explorer:
                 )
             )
 
-            if action is not Action.STOP:
+            if action is not Action.STOP and not degenerate:
                 robot.move(next_pose)
                 coverage.add_pose(next_pose, seed_id=seed_id)
                 trail.append(next_pose)
