@@ -36,6 +36,8 @@ vlm = [
 # Opt-in: local OpenAI-compatible vLLM server.
 vllm = [
     "vllm>=0.21,<0.22",
+    "torchvision>=0.26",
+    "torchaudio>=2.11",
 ]
 # Opt-in: everything for development
 dev = [
@@ -52,6 +54,18 @@ gaussian-robot = "gaussian_robot.cli:app"
 [project.urls]
 Homepage = "https://github.com/lucasimonetti/gaussian-robot"
 Repository = "https://github.com/lucasimonetti/gaussian-robot"
+
+# ---- uv ----
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
+torchaudio = { index = "pytorch-cu128" }
+vllm = { url = "https://vllm-wheels.s3.us-west-2.amazonaws.com/ad7125a431e176d4161099480a66f0169609a690/vllm-0.21.0%2Bcu129-cp38-abi3-manylinux_2_34_x86_64.whl" }
 
 [build-system]
 requires = ["hatchling"]
