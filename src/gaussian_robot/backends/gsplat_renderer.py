@@ -56,7 +56,9 @@ class GsplatRenderer:
 
         device = self.cloud.means.device
         viewmats = torch.tensor(viewmat, dtype=torch.float32, device=device).unsqueeze(0)
-        ks = torch.tensor(camera.intrinsics.k_matrix, dtype=torch.float32, device=device).unsqueeze(0)
+        ks = torch.tensor(camera.intrinsics.k_matrix, dtype=torch.float32, device=device).unsqueeze(
+            0
+        )
 
         with torch.no_grad():
             rendered, alphas, _meta = rasterization(
@@ -85,10 +87,22 @@ class GsplatRenderer:
 
 
 _PLY_STRUCT_CODES = {
-    "char": "b", "int8": "b", "uchar": "B", "uint8": "B",
-    "short": "h", "int16": "h", "ushort": "H", "uint16": "H",
-    "int": "i", "int32": "i", "uint": "I", "uint32": "I",
-    "float": "f", "float32": "f", "double": "d", "float64": "d",
+    "char": "b",
+    "int8": "b",
+    "uchar": "B",
+    "uint8": "B",
+    "short": "h",
+    "int16": "h",
+    "ushort": "H",
+    "uint16": "H",
+    "int": "i",
+    "int32": "i",
+    "uint": "I",
+    "uint32": "I",
+    "float": "f",
+    "float32": "f",
+    "double": "d",
+    "float64": "d",
 }
 
 
@@ -101,18 +115,23 @@ def load_gaussian_cloud(path: str | Path, *, device: str = "cuda") -> GaussianCl
 
     means = np.stack([data["x"], data["y"], data["z"]], axis=1).astype(np.float32)
 
-    has_gaussian = all(k in data for k in ("rot_0", "rot_1", "rot_2", "rot_3",
-                                            "scale_0", "scale_1", "scale_2",
-                                            "opacity"))
+    has_gaussian = all(
+        k in data
+        for k in ("rot_0", "rot_1", "rot_2", "rot_3", "scale_0", "scale_1", "scale_2", "opacity")
+    )
     if not has_gaussian:
         raise ValueError(f"PLY lacks gaussian properties (rot/scale/opacity): {p}")
 
-    quats = np.stack([data["rot_0"], data["rot_1"], data["rot_2"], data["rot_3"]], axis=1).astype(np.float32)
+    quats = np.stack([data["rot_0"], data["rot_1"], data["rot_2"], data["rot_3"]], axis=1).astype(
+        np.float32
+    )
     norms = np.linalg.norm(quats, axis=1, keepdims=True)
     norms = np.maximum(norms, 1e-8)
     quats = quats / norms
 
-    scales_log = np.stack([data["scale_0"], data["scale_1"], data["scale_2"]], axis=1).astype(np.float32)
+    scales_log = np.stack([data["scale_0"], data["scale_1"], data["scale_2"]], axis=1).astype(
+        np.float32
+    )
     scales = np.exp(scales_log)
 
     opacity_logit = data["opacity"].astype(np.float32)
@@ -151,7 +170,10 @@ def load_gaussian_cloud(path: str | Path, *, device: str = "cuda") -> GaussianCl
     x_bins = np.linspace(lo[0], hi[0], grid_size + 1)
     z_bins = np.linspace(lo[2], hi[2], grid_size + 1)
     density, _, _ = np.histogram2d(
-        means[:, 0], means[:, 2], bins=[x_bins, z_bins], weights=opacities,
+        means[:, 0],
+        means[:, 2],
+        bins=[x_bins, z_bins],
+        weights=opacities,
     )
     dmax = density.max()
     density_norm = np.log1p(density) / np.log1p(dmax) if dmax > 0 else density
@@ -217,9 +239,7 @@ def _read_binary_fast(
     return {name: arr[name].astype(np.float64) for name, _ in props}
 
 
-def _read_ascii(
-    fh: BinaryIO, n_verts: int, props: list[tuple[str, str]]
-) -> dict[str, np.ndarray]:
+def _read_ascii(fh: BinaryIO, n_verts: int, props: list[tuple[str, str]]) -> dict[str, np.ndarray]:
     rows = []
     for _ in range(n_verts):
         row = fh.readline().decode("ascii", errors="replace").split()

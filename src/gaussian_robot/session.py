@@ -123,7 +123,9 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
         fb = renderer.cloud.full_bounds
         full_center = (fb.min + fb.max) / 2.0
 
-    pose = Pose(position=full_center.copy(), rotation=look_at(full_center, full_center, config.up_axis))
+    pose = Pose(
+        position=full_center.copy(), rotation=look_at(full_center, full_center, config.up_axis)
+    )
     frames: list[str] = []
 
     for _step_i in range(n_steps):
@@ -224,7 +226,9 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     )
     vlm = build_vlm(config)
     builder = ObservationBuilder(
-        renderer=renderer, up_axis=config.up_axis, map_size=config.map_size,
+        renderer=renderer,
+        up_axis=config.up_axis,
+        map_size=config.map_size,
         task=config.task_prompt,
     )
 

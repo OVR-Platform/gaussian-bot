@@ -176,9 +176,7 @@ class ObservationBuilder:
         if world_w < 1e-9 or world_h < 1e-9:
             return Image.new("RGB", (size, size), (240, 240, 240))
 
-        big = Image.fromarray(hm).resize(
-            (max(1, int(g * 4)), max(1, int(g * 4))), Image.BILINEAR
-        )
+        big = Image.fromarray(hm).resize((max(1, int(g * 4)), max(1, int(g * 4))), Image.BILINEAR)
         bw, bh = big.size
         # Agent position in pixel coords on the big image
         cx = (cur_floor[0] - lo[0]) / world_w * bw

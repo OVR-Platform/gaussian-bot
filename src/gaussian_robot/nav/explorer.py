@@ -125,7 +125,11 @@ class Explorer:
         for step_idx in range(self.max_steps):
             camera = robot.camera()
             observation, render = self.observation_builder.build(
-                camera, coverage, trail, step=step_idx + 1, budget=self.max_steps,
+                camera,
+                coverage,
+                trail,
+                step=step_idx + 1,
+                budget=self.max_steps,
                 action_history=action_history,
             )
             decision = self.vlm.act(observation)
