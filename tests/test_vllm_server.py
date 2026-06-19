@@ -10,7 +10,6 @@ from gaussian_robot.config import RunConfig
 from gaussian_robot.vlm.server import (
     VLLMServerProcess,
     _server_ready,
-    _vllm_executable,
     vllm_command,
 )
 
@@ -24,7 +23,11 @@ def test_vllm_command_uses_configured_model_host_and_port() -> None:
     )
 
     assert vllm_command(config) == [
-        _vllm_executable(),
+        "uv",
+        "run",
+        "--extra",
+        "vllm",
+        "vllm",
         "serve",
         "Qwen/Qwen3.5-9B",
         "--host",
@@ -36,15 +39,8 @@ def test_vllm_command_uses_configured_model_host_and_port() -> None:
     ]
 
 
-def test_vllm_executable_prefers_project_venv(tmp_path: Path) -> None:
-    vllm = tmp_path / "vllm"
-    vllm.touch()
-
-    assert _vllm_executable([vllm]) == str(vllm)
-
-
 def test_vllm_start_reports_immediate_exit(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    fake = tmp_path / "vllm"
+    fake = tmp_path / "uv"
     fake.write_text("#!/bin/sh\necho startup failed\nexit 42\n")
     fake.chmod(0o755)
     monkeypatch.chdir(tmp_path)

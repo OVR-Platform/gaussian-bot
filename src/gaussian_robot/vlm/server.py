@@ -6,15 +6,13 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from shutil import which
 
 from gaussian_robot.config import RunConfig
 
 _VLLM_INSTALL_HINT = (
-    "Run `uv sync --extra vlm --extra vllm` on this machine, then restart the dashboard."
+    "Ensure `uv` is installed and the vllm extra is available, then restart the dashboard."
 )
 _VLLM_LOG_PATH = Path("data/vllm.log")
 
@@ -82,7 +80,11 @@ class VLLMServerProcess:
 def vllm_command(config: RunConfig) -> list[str]:
     """Build the vLLM OpenAI-compatible server command."""
     return [
-        _vllm_executable(),
+        "uv",
+        "run",
+        "--extra",
+        "vllm",
+        "vllm",
         "serve",
         config.vlm_model,
         "--host",
@@ -91,15 +93,6 @@ def vllm_command(config: RunConfig) -> list[str]:
         str(config.vllm_port),
         *config.vllm_extra_args,
     ]
-
-
-def _vllm_executable(candidates: Sequence[Path] | None = None) -> str:
-    candidate_paths = candidates or [Path(".venv/bin/vllm")]
-    for candidate in candidate_paths:
-        if candidate.exists():
-            return str(candidate)
-    found = which("vllm")
-    return found or "vllm"
 
 
 def _tail_log(path: Path = _VLLM_LOG_PATH, *, max_bytes: int = 4000) -> str:
