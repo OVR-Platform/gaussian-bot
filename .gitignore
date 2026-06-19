@@ -1,0 +1,96 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ---- Virtual envs ----
+.venv/
+venv/
+env/
+ENV/
+
+# ---- uv ----
+# keep uv.lock tracked
+# !uv.lock
+
+# ---- Type checkers / linters ----
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.ruff_cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.tox/
+.nox/
+.cache
+nosetests.xml
+
+# ---- Jupyter ----
+.ipynb_checkpoints
+*.ipynb
+
+# ---- Project data (splats, renders, datasets, model weights) ----
+data/*
+!data/.gitkeep
+data/raw/
+data/interim/
+data/processed/
+renders/
+outputs/
+runs/
+wandb/
+mlruns/
+*.ply
+*.splat
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.bin
+
+# ---- Logs ----
+logs/
+*.log
+
+# ---- Editor / IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ---- OS ----
+Thumbs.db
+desktop.ini
+
+# ---- Local env / secrets ----
+.env
+.env.*
+!.env.example
+secrets/
