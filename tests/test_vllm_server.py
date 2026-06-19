@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from gaussian_robot.config import RunConfig
-from gaussian_robot.vlm.server import vllm_command
+from gaussian_robot.vlm.server import _vllm_executable, vllm_command
 
 
 def test_vllm_command_uses_configured_model_host_and_port() -> None:
@@ -15,7 +17,7 @@ def test_vllm_command_uses_configured_model_host_and_port() -> None:
     )
 
     assert vllm_command(config) == [
-        "vllm",
+        _vllm_executable(),
         "serve",
         "Qwen/Qwen3.5-9B",
         "--host",
@@ -25,3 +27,10 @@ def test_vllm_command_uses_configured_model_host_and_port() -> None:
         "--dtype",
         "auto",
     ]
+
+
+def test_vllm_executable_prefers_project_venv(tmp_path: Path) -> None:
+    vllm = tmp_path / "vllm"
+    vllm.touch()
+
+    assert _vllm_executable([vllm]) == str(vllm)

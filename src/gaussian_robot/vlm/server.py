@@ -3,10 +3,16 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from shutil import which
 
 from gaussian_robot.config import RunConfig
+
+_VLLM_INSTALL_HINT = (
+    "Run `uv sync --extra vlm --extra vllm` on this machine, then restart the dashboard."
+)
 
 
 @dataclass(frozen=True)
@@ -38,9 +44,7 @@ class VLLMServerProcess:
         try:
             self._process = subprocess.Popen(command, stdout=log_file, stderr=subprocess.STDOUT)
         except FileNotFoundError as exc:
-            raise RuntimeError(
-                "vllm executable not found. Install vLLM in this environment before launching it."
-            ) from exc
+            raise RuntimeError(f"vllm executable not found. {_VLLM_INSTALL_HINT}") from exc
         finally:
             log_file.close()
         self._command = command
@@ -68,7 +72,7 @@ class VLLMServerProcess:
 def vllm_command(config: RunConfig) -> list[str]:
     """Build the vLLM OpenAI-compatible server command."""
     return [
-        "vllm",
+        _vllm_executable(),
         "serve",
         config.vlm_model,
         "--host",
@@ -77,3 +81,12 @@ def vllm_command(config: RunConfig) -> list[str]:
         str(config.vllm_port),
         *config.vllm_extra_args,
     ]
+
+
+def _vllm_executable(candidates: Sequence[Path] | None = None) -> str:
+    candidate_paths = candidates or [Path(".venv/bin/vllm")]
+    for candidate in candidate_paths:
+        if candidate.exists():
+            return str(candidate)
+    found = which("vllm")
+    return found or "vllm"

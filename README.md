@@ -35,6 +35,8 @@ uv sync --extra dev
 # uv sync --extra gsplat
 # opt into a VLM client later
 # uv sync --extra vlm
+# opt into a local vLLM server later
+# uv sync --extra vlm --extra vllm
 
 # run the CLI
 uv run gaussian-robot --help

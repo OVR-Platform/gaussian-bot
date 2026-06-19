@@ -33,6 +33,10 @@ vlm = [
     "openai>=1.30",
     "httpx>=0.27",
 ]
+# Opt-in: local OpenAI-compatible vLLM server.
+vllm = [
+    "vllm>=0.10",
+]
 # Opt-in: everything for development
 dev = [
     "ruff>=0.5",
