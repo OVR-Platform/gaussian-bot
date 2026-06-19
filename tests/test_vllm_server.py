@@ -17,11 +17,27 @@ from gaussian_robot.vlm.server import (
 
 def test_vllm_command_uses_configured_model_host_and_port() -> None:
     config = RunConfig(
-        vlm_model="Qwen/Qwen3.5-9B",
+        vlm_model="Qwen/Qwen3-8B",
         vllm_host="0.0.0.0",
         vllm_port=8000,
         vllm_extra_args=["--dtype", "auto"],
     )
+
+    assert vllm_command(config) == [
+        _vllm_executable(),
+        "serve",
+        "Qwen/Qwen3-8B",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+        "--dtype",
+        "auto",
+    ]
+
+
+def test_vllm_command_forces_transformers_impl_for_qwen3_5() -> None:
+    config = RunConfig(vlm_model="Qwen/Qwen3.5-9B")
 
     assert vllm_command(config) == [
         _vllm_executable(),
@@ -31,9 +47,15 @@ def test_vllm_command_uses_configured_model_host_and_port() -> None:
         "0.0.0.0",
         "--port",
         "8000",
-        "--dtype",
-        "auto",
+        "--model-impl",
+        "transformers",
     ]
+
+
+def test_vllm_command_keeps_explicit_model_impl() -> None:
+    config = RunConfig(vlm_model="Qwen/Qwen3.5-9B", vllm_extra_args=["--model-impl", "vllm"])
+
+    assert vllm_command(config)[-2:] == ["--model-impl", "vllm"]
 
 
 def test_vllm_executable_prefers_project_venv(tmp_path: Path) -> None:
