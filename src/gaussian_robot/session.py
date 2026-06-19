@@ -107,7 +107,7 @@ def load_preview(config: RunConfig) -> dict[str, object]:
 
 def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> dict[str, object]:
     """Render an animation of ``n_steps`` forward steps, interpolated into ``n_frames`` per step."""
-    from gaussian_robot.nav.action import ActionSpace, Action, apply_action  # noqa: PLC0415
+    from gaussian_robot.nav.action import Action, ActionSpace, apply_action  # noqa: PLC0415
     from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
     from gaussian_robot.vlm.qwen import jpeg_data_url  # noqa: PLC0415
 
@@ -126,7 +126,7 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
     pose = Pose(position=full_center.copy(), rotation=look_at(full_center, full_center, config.up_axis))
     frames: list[str] = []
 
-    for step_i in range(n_steps):
+    for _step_i in range(n_steps):
         next_pose = apply_action(pose, Action.FORWARD, space, config.up_axis)
         for f in range(n_frames):
             t = f / max(n_frames - 1, 1)

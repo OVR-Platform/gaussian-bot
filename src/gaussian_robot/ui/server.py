@@ -67,11 +67,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/api/animate-forward":
             self._animate_forward()
             return
-        if self.path == "/api/run":
-            self._stream_run(step_mode=False)
-            return
-        if self.path == "/api/run/stepping":
-            self._stream_run(step_mode=True)
+        if self.path in ("/api/run", "/api/run/stepping"):
+            self._stream_run(step_mode=(self.path == "/api/run/stepping"))
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 

@@ -63,19 +63,26 @@ class ObservationBuilder:
     map_span: float | None = None
     task: str = ""
     prompt: str = (
-        "You are a robot exploring a 3D indoor scene. Your goal is to MOVE "
-        "through the space and visit as many areas as possible.\n"
-        "Panels: [rgb] your current view; [depth] distance to surfaces "
-        "(bright = near, dark = far); [map] top-down map rotating with you — "
-        "blue dots = visited poses, green line = your trail, red arrow = you "
-        "(up = forward).\n"
+        "You are a robot exploring a 3D reconstructed scene. Move through the "
+        "space to find areas where the 3D reconstruction has gaps or artifacts.\n"
+        "Panels:\n"
+        "- [rgb] your current camera view\n"
+        "- [depth] distance map (bright = near, dark = far)\n"
+        "- [confidence] reconstruction quality (GREEN = solid, RED = holes/gaps "
+        "that need more coverage)\n"
+        "- [map] top-down map rotating with you. Background shows reconstruction "
+        "density (red = sparse/gaps, green = dense/good). Blue dots = visited, "
+        "green line = trail, red arrow = you (up = forward).\n"
         "RULES:\n"
-        "- PREFER forward. Move forward whenever the path ahead is clear.\n"
-        "- Use turn_left or turn_right to face open space, then forward.\n"
-        "- Avoid going back the way you came (your green trail).\n"
-        "- Only use stop when the area is fully explored.\n"
-        "- Do NOT just look around — you must MOVE to explore.\n"
-        '- If you are near a wall, use back to retreat, then turn.\n'
+        "- Your primary action should be FORWARD. Always move forward if the "
+        "path is clear.\n"
+        "- Turn to face RED areas in the confidence panel or map — those are "
+        "gaps that need exploration.\n"
+        "- Vary your direction. Do NOT keep going straight forever. Alternate: "
+        "forward several steps, then turn to explore a new corridor.\n"
+        "- Use back if you are too close to a wall (depth panel mostly bright).\n"
+        "- Only stop after at least 20 steps AND when you see no more red areas.\n"
+        "- Check your [history] — avoid repeating the same pattern.\n"
         'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|stop>"}.'
     )
 
@@ -97,6 +104,7 @@ class ObservationBuilder:
         """
         result = self.renderer.render(camera)
         depth_panel = depth_to_uint8(result.depth)
+        confidence_panel = self._confidence_panel(result.alpha)
         map_panel = self._body_frame_map(coverage, camera.pose, trail)
         state_line = self._state_line(camera.pose, step, budget)
 
@@ -112,11 +120,23 @@ class ObservationBuilder:
             panels=[
                 ("rgb", result.rgb),
                 ("depth", depth_panel),
+                ("confidence", confidence_panel),
                 ("map", map_panel),
             ],
             prompt="\n".join(parts),
         )
         return obs, result
+
+    @staticmethod
+    def _confidence_panel(alpha: np.ndarray | None) -> np.ndarray:
+        """Render alpha as a confidence heatmap: green = solid, red = holes."""
+        if alpha is None:
+            return np.zeros((512, 512, 3), dtype=np.uint8)
+        h, w = alpha.shape
+        panel = np.zeros((h, w, 3), dtype=np.uint8)
+        panel[:, :, 0] = ((1.0 - alpha) * 255).clip(0, 255).astype(np.uint8)
+        panel[:, :, 1] = (alpha * 200).clip(0, 255).astype(np.uint8)
+        return panel
 
     def _state_line(self, pose: Pose, step: int, budget: int) -> str:
         step_str = f"{step}/{budget}" if budget > 0 else str(step)
@@ -125,15 +145,65 @@ class ObservationBuilder:
             f"({pose.position[0]:.2f},{pose.position[1]:.2f},{pose.position[2]:.2f})"
         )
 
+    def _density_background(self, current: Pose, size: int, span: float) -> Image.Image:
+        """Create the map background with density heatmap, rotated to body frame."""
+        if not (hasattr(self.renderer, "cloud") and self.renderer.cloud.density_grid is not None):
+            return Image.new("RGB", (size, size), (240, 240, 240))
+
+        density_grid = self.renderer.cloud.density_grid
+        db = self.renderer.cloud.density_bounds
+        if db is None:
+            return Image.new("RGB", (size, size), (240, 240, 240))
+
+        lo, hi = db
+        g = density_grid.shape[0]
+        hm = np.zeros((g, g, 3), dtype=np.uint8)
+        hm[:, :, 0] = ((1.0 - density_grid) * 180).clip(0, 255).astype(np.uint8)
+        hm[:, :, 1] = (density_grid * 120 + 60).clip(0, 255).astype(np.uint8)
+        hm[:, :, 2] = 40
+        # density_grid axes are [x_bin, z_bin]; image needs [row=z, col=x]
+        hm = np.transpose(hm, (1, 0, 2))[::-1].copy()
+
+        # Scale the heatmap to world-space, then crop/rotate around the agent.
+        cur_floor = floor_xy(current.position, self.up_axis)[0]
+        fwd3 = current.heading(self.up_axis)
+        fwd2 = floor_xy(fwd3, self.up_axis)[0]
+        n2 = float(np.linalg.norm(fwd2))
+        heading_deg = 0.0 if n2 < 1e-9 else float(np.degrees(np.arctan2(fwd2[0], fwd2[1])))
+
+        world_w = hi[0] - lo[0]
+        world_h = hi[2] - lo[2]
+        if world_w < 1e-9 or world_h < 1e-9:
+            return Image.new("RGB", (size, size), (240, 240, 240))
+
+        big = Image.fromarray(hm).resize(
+            (max(1, int(g * 4)), max(1, int(g * 4))), Image.BILINEAR
+        )
+        bw, bh = big.size
+        # Agent position in pixel coords on the big image
+        cx = (cur_floor[0] - lo[0]) / world_w * bw
+        cy = (1.0 - (cur_floor[1] - lo[2]) / world_h) * bh
+        # Rotate around agent so heading points up
+        rotated = big.rotate(heading_deg, center=(cx, cy), expand=True, fillcolor=(180, 60, 40))
+        rw, rh = rotated.size
+        new_cx = rw / 2 + (cx - bw / 2)
+        new_cy = rh / 2 + (cy - bh / 2)
+        # Crop a square around the agent matching the map span
+        px_per_unit = bw / world_w
+        half_px = int(span / 2.0 * px_per_unit)
+        left = int(new_cx - half_px)
+        top = int(new_cy - half_px)
+        cropped = rotated.crop((left, top, left + 2 * half_px, top + 2 * half_px))
+        return cropped.resize((size, size), Image.BILINEAR)
+
     def _body_frame_map(
         self, coverage: CoverageState, current: Pose, trail: list[Pose]
     ) -> np.ndarray:
         size = self.map_size
-        img = Image.new("RGB", (size, size), (255, 255, 255))
-        draw = ImageDraw.Draw(img)
-
         diag = float(np.linalg.norm(coverage.bounds_max - coverage.bounds_min))
         span = self.map_span if self.map_span is not None else max(diag, 1e-9)
+        img = self._density_background(current, size, span)
+        draw = ImageDraw.Draw(img)
         half_span = max(span / 2.0, 1e-9)
         px_per_unit = (size / 2.0) / half_span
 

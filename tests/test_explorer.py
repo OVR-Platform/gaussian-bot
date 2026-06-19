@@ -57,9 +57,9 @@ class ScriptedVLM:
 
     def act(self, observation: Observation) -> Decision:
         assert isinstance(observation, Observation)
-        assert len(observation.panels) == 3
+        assert len(observation.panels) == 4
         labels = [label for label, _ in observation.panels]
-        assert labels == ["rgb", "depth", "map"]
+        assert labels == ["rgb", "depth", "confidence", "map"]
         action = next(self._gen)
         return Decision(action=action, raw_text=action.value)
 

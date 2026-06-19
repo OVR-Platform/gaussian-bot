@@ -73,8 +73,9 @@ class QwenVLMClient:
         return self.base_url.rstrip("/") + "/chat/completions"
 
     def act(self, observation: Observation) -> Decision:
-        import httpx  # noqa: PLC0415
         from pathlib import Path  # noqa: PLC0415
+
+        import httpx  # noqa: PLC0415
 
         dbg = Path("data/vlm_debug")
         dbg.mkdir(parents=True, exist_ok=True)

@@ -31,6 +31,8 @@ class GaussianCloud:
     sh_degree: int
     bounds: SceneBounds  # tight (percentile) for exploration
     full_bounds: SceneBounds  # raw min/max of all gaussians
+    density_grid: np.ndarray | None = None  # (G, G) floor-plane density, normalised [0,1]
+    density_bounds: tuple[np.ndarray, np.ndarray] | None = None  # (lo, hi) for the grid
 
 
 class GsplatRenderer:
@@ -46,15 +48,15 @@ class GsplatRenderer:
 
     def render(self, camera: Camera) -> RenderResult:
         h, w = camera.intrinsics.height, camera.intrinsics.width
-        R = camera.pose.rotation
-        t = -R @ camera.pose.position
+        rot = camera.pose.rotation
+        t = -rot @ camera.pose.position
         viewmat = np.eye(4, dtype=np.float64)
-        viewmat[:3, :3] = R
+        viewmat[:3, :3] = rot
         viewmat[:3, 3] = t
 
         device = self.cloud.means.device
         viewmats = torch.tensor(viewmat, dtype=torch.float32, device=device).unsqueeze(0)
-        Ks = torch.tensor(camera.intrinsics.k_matrix, dtype=torch.float32, device=device).unsqueeze(0)
+        ks = torch.tensor(camera.intrinsics.k_matrix, dtype=torch.float32, device=device).unsqueeze(0)
 
         with torch.no_grad():
             rendered, alphas, _meta = rasterization(
@@ -64,7 +66,7 @@ class GsplatRenderer:
                 opacities=self.cloud.opacities,
                 colors=self.cloud.sh_coeffs,
                 viewmats=viewmats,
-                Ks=Ks,
+                Ks=ks,
                 width=w,
                 height=h,
                 sh_degree=self.cloud.sh_degree,
@@ -77,8 +79,9 @@ class GsplatRenderer:
         rgb = (rgb_float * 255.0).to(torch.uint8).cpu().numpy()
         depth = rendered[0, :, :, 3].flip(0).cpu().numpy().astype(np.float32)
         depth[depth <= 0] = np.inf
+        alpha = alphas[0, :, :, 0].flip(0).cpu().numpy().astype(np.float32)
 
-        return RenderResult(rgb=rgb, camera=camera, depth=depth)
+        return RenderResult(rgb=rgb, camera=camera, depth=depth, alpha=alpha)
 
 
 _PLY_STRUCT_CODES = {
@@ -143,6 +146,16 @@ def load_gaussian_cloud(path: str | Path, *, device: str = "cuda") -> GaussianCl
         max=means.max(axis=0).astype(np.float64),
     )
 
+    # Floor-plane density grid (opacity-weighted) for guiding exploration.
+    grid_size = 64
+    x_bins = np.linspace(lo[0], hi[0], grid_size + 1)
+    z_bins = np.linspace(lo[2], hi[2], grid_size + 1)
+    density, _, _ = np.histogram2d(
+        means[:, 0], means[:, 2], bins=[x_bins, z_bins], weights=opacities,
+    )
+    dmax = density.max()
+    density_norm = np.log1p(density) / np.log1p(dmax) if dmax > 0 else density
+
     return GaussianCloud(
         means=torch.tensor(means, device=device),
         quats=torch.tensor(quats, device=device),
@@ -152,6 +165,8 @@ def load_gaussian_cloud(path: str | Path, *, device: str = "cuda") -> GaussianCl
         sh_degree=sh_degree,
         bounds=bounds,
         full_bounds=full_bounds,
+        density_grid=density_norm,
+        density_bounds=(lo, hi),
     )
 
 

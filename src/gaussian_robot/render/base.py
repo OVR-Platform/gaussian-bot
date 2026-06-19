@@ -33,6 +33,7 @@ class RenderResult:
     rgb: np.ndarray
     camera: Camera
     depth: np.ndarray | None = None
+    alpha: np.ndarray | None = None
 
     def __post_init__(self) -> None:
         if self.rgb.ndim != 3 or self.rgb.shape[2] != 3:

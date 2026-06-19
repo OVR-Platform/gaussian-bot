@@ -94,9 +94,10 @@ PAGE_HTML = """<!doctype html>
 
 <section class="panel">
   <div class="chips" id="chips"><span class="chip">idle</span></div>
-  <div class="views">
+  <div class="views" style="grid-template-columns:repeat(4,1fr);">
     <figure><figcaption>rgb view</figcaption><img id="rgb" class="panel"/></figure>
     <figure><figcaption>depth</figcaption><img id="depth" class="panel"/></figure>
+    <figure><figcaption>confidence</figcaption><img id="confidence" class="panel"/></figure>
     <figure><figcaption>map (body-fixed)</figcaption><img id="body-map" class="panel"/></figure>
   </div>
   <h2>Global coverage (world frame)</h2>
@@ -263,6 +264,7 @@ async function run(endpoint){
     if(m.type==="step"){
       if(m.panels.rgb) document.getElementById("rgb").src=m.panels.rgb;
       if(m.panels.depth) document.getElementById("depth").src=m.panels.depth;
+      if(m.panels.confidence) document.getElementById("confidence").src=m.panels.confidence;
       if(m.panels.map) document.getElementById("body-map").src=m.panels.map;
       document.getElementById("reason").textContent = m.raw_text || m.action;
       const log = document.getElementById("action-log");
