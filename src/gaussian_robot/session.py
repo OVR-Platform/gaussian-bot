@@ -47,7 +47,7 @@ def _load_renderer(ply_path: str) -> tuple[Renderer, np.ndarray, np.ndarray]:
     global _cached_renderer  # noqa: PLW0603
     if _cached_renderer is not None and _cached_renderer[0] == ply_path:
         r = _cached_renderer[1]
-        bounds = r.cloud.bounds  # type: ignore[union-attr]
+        bounds = r.cloud.bounds  # type: ignore[attr-defined]
         return r, bounds.min, bounds.max  # type: ignore[return-value]
 
     try:
@@ -93,7 +93,7 @@ def load_preview(config: RunConfig) -> dict[str, object]:
 
     from gaussian_robot.nav.observation import depth_to_uint8  # noqa: PLC0415
 
-    result = renderer.render(camera)  # type: ignore[union-attr]
+    result = renderer.render(camera)
     depth_panel = depth_to_uint8(result.depth)
     return {
         "rgb": jpeg_data_url(result.rgb),
@@ -134,7 +134,7 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
             t = f / max(n_frames - 1, 1)
             pos = pose.position * (1 - t) + next_pose.position * t
             cam = Camera(pose=Pose(position=pos, rotation=pose.rotation), intrinsics=intrinsics)
-            result = renderer.render(cam)  # type: ignore[union-attr]
+            result = renderer.render(cam)
             frames.append(jpeg_data_url(result.rgb))
         pose = next_pose
 

@@ -176,7 +176,9 @@ class ObservationBuilder:
         if world_w < 1e-9 or world_h < 1e-9:
             return Image.new("RGB", (size, size), (240, 240, 240))
 
-        big = Image.fromarray(hm).resize((max(1, int(g * 4)), max(1, int(g * 4))), Image.BILINEAR)
+        big = Image.fromarray(hm).resize(
+            (max(1, int(g * 4)), max(1, int(g * 4))), Image.Resampling.BILINEAR
+        )
         bw, bh = big.size
         # Agent position in pixel coords on the big image
         cx = (cur_floor[0] - lo[0]) / world_w * bw
@@ -192,7 +194,7 @@ class ObservationBuilder:
         left = int(new_cx - half_px)
         top = int(new_cy - half_px)
         cropped = rotated.crop((left, top, left + 2 * half_px, top + 2 * half_px))
-        return cropped.resize((size, size), Image.BILINEAR)
+        return cropped.resize((size, size), Image.Resampling.BILINEAR)
 
     def _body_frame_map(
         self, coverage: CoverageState, current: Pose, trail: list[Pose]
