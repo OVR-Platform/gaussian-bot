@@ -45,6 +45,17 @@ PAGE_HTML = """<!doctype html>
     <div><label>vLLM model</label><input id="vlm_model"/></div>
   </div>
   <label><input type="checkbox" id="use_real_vlm" style="width:auto"/> use live vLLM (else demo VLM)</label>
+  <label><input type="checkbox" id="start_vllm" style="width:auto"/> launch vLLM before running</label>
+  <div class="row">
+    <div><label>vLLM bind host</label><input id="vllm_host"/></div>
+    <div><label>vLLM port</label><input id="vllm_port" type="number"/></div>
+  </div>
+  <label>vLLM extra args</label>
+  <input id="vllm_extra_args" placeholder="--dtype auto --gpu-memory-utilization 0.9"/>
+  <div class="row">
+    <button onclick="startVLLM()" class="ghost">Start vLLM</button>
+    <button onclick="stopVLLM()" class="ghost">Stop vLLM</button>
+  </div>
   <h2>Scene &amp; exploration</h2>
   <label>up axis</label>
   <select id="up_axis"><option>y</option><option>x</option><option>z</option></select>
@@ -88,9 +99,12 @@ function floorAxes(up){ const all=[0,1,2]; const u={x:0,y:1,z:2}[up]; return all
 
 async function loadConfig(){
   const c = await fetch("/api/config").then(r=>r.json());
-  for (const k of ["ply_path","vlm_base_url","vlm_model"]) document.getElementById(k).value = c[k] ?? "";
+  for (const k of ["ply_path","vlm_base_url","vlm_model","vllm_host"]) document.getElementById(k).value = c[k] ?? "";
   document.getElementById("up_axis").value = c.up_axis;
   document.getElementById("use_real_vlm").checked = !!c.use_real_vlm;
+  document.getElementById("start_vllm").checked = !!c.start_vllm;
+  document.getElementById("vllm_port").value = c.vllm_port;
+  document.getElementById("vllm_extra_args").value = (c.vllm_extra_args||[]).join(" ");
   document.getElementById("bounds_min").value = (c.bounds_min||[0,0,0]).join(",");
   document.getElementById("bounds_max").value = (c.bounds_max||[10,10,10]).join(",");
   document.getElementById("action_step_fraction").value = c.action_step_fraction;
@@ -101,12 +115,17 @@ async function loadConfig(){
 }
 function gather(){
   const split3 = v => v.split(",").map(parseFloat);
+  const splitArgs = v => v.trim() === "" ? [] : v.trim().split(/\s+/);
   const cr = document.getElementById("coverage_radius").value;
   return {
     ply_path: document.getElementById("ply_path").value || null,
     vlm_base_url: document.getElementById("vlm_base_url").value,
     vlm_model: document.getElementById("vlm_model").value,
     use_real_vlm: document.getElementById("use_real_vlm").checked,
+    start_vllm: document.getElementById("start_vllm").checked,
+    vllm_host: document.getElementById("vllm_host").value,
+    vllm_port: num(document.getElementById("vllm_port").value, 8000),
+    vllm_extra_args: splitArgs(document.getElementById("vllm_extra_args").value),
     up_axis: document.getElementById("up_axis").value,
     bounds_min: split3(document.getElementById("bounds_min").value),
     bounds_max: split3(document.getElementById("bounds_max").value),
@@ -120,6 +139,16 @@ function gather(){
 async function saveConfig(){
   const r = await fetch("/api/config",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(gather())});
   setStatus("saved: " + (r.ok ? "ok" : "failed"));
+}
+async function startVLLM(){
+  await saveConfig();
+  setStatus("starting vLLM...");
+  const r = await fetch("/api/vllm/start",{method:"POST"}).then(r=>r.json());
+  setStatus(r.ok ? `vLLM running pid ${r.pid}` : `vLLM failed: ${r.error}`);
+}
+async function stopVLLM(){
+  const r = await fetch("/api/vllm/stop",{method:"POST"}).then(r=>r.json());
+  setStatus(r.running ? `vLLM running pid ${r.pid}` : "vLLM stopped");
 }
 function setStatus(t){ document.getElementById("status").textContent = t; }
 function setChips(o){ document.getElementById("chips").innerHTML =

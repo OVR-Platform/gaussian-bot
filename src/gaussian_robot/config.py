@@ -27,6 +27,12 @@ class RunConfig(BaseModel):
     use_real_vlm: bool = Field(
         default=False, description="If true, call the vLLM endpoint; else use the demo VLM."
     )
+    start_vllm: bool = Field(
+        default=False, description="If true, launch vLLM from the dashboard server."
+    )
+    vllm_host: str = Field(default="0.0.0.0", description="Bind host for the vLLM server.")
+    vllm_port: int = Field(default=8000, ge=1, le=65535)
+    vllm_extra_args: list[str] = Field(default_factory=list)
 
     up_axis: str = Field(default="y")
     bounds_min: tuple[float, float, float] = Field(default=(0.0, 0.0, 0.0))

@@ -14,10 +14,15 @@ from gaussian_robot.events import SessionEvent
 from gaussian_robot.session import build_session
 from gaussian_robot.ui.page import PAGE_HTML
 from gaussian_robot.ui.serialize import event_to_message
+from gaussian_robot.vlm.server import VLLMServerProcess, VLLMStatus
+
+_VLLM = VLLMServerProcess()
 
 
-def serve_dashboard(host: str, port: int) -> None:
+def serve_dashboard(host: str, port: int, *, start_vllm: bool = False) -> None:
     """Serve the dashboard until interrupted."""
+    if start_vllm:
+        _VLLM.start(load_config())
     server = ThreadingHTTPServer((host, port), DashboardHandler)
     try:
         server.serve_forever()
@@ -37,6 +42,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             body = json.dumps(load_config().model_dump(mode="json")).encode()
             self._send_headers("application/json; charset=utf-8", len(body))
             return
+        if self.path == "/api/vllm/status":
+            body = json.dumps(_status_payload(_VLLM.status())).encode()
+            self._send_headers("application/json; charset=utf-8", len(body))
+            return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_GET(self) -> None:  # noqa: N802
@@ -46,12 +55,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if self.path == "/api/config":
             self._send_json(load_config().model_dump(mode="json"))
             return
+        if self.path == "/api/vllm/status":
+            self._send_json(_status_payload(_VLLM.status()))
+            return
         if self.path == "/api/run":
             self._stream_run()
             return
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:  # noqa: N802
+        if self.path == "/api/vllm/start":
+            self._start_vllm()
+            return
+        if self.path == "/api/vllm/stop":
+            self._send_json(_status_payload(_VLLM.stop()))
+            return
         if self.path != "/api/config":
             self.send_error(HTTPStatus.NOT_FOUND)
             return
@@ -80,7 +98,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._write_sse(event_to_message(event))
 
         try:
-            explorer, seeds, coverage = build_session(load_config())
+            config = load_config()
+            if config.start_vllm:
+                _VLLM.start(config)
+            explorer, seeds, coverage = build_session(config)
             explorer.event_sink = emit
             explorer.run_session(seeds, coverage)
         except BrokenPipeError:
@@ -90,6 +111,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self._write_sse({"type": "error", "message": str(exc)})
             except BrokenPipeError:
                 return
+
+    def _start_vllm(self) -> None:
+        try:
+            status = _VLLM.start(load_config())
+        except RuntimeError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            return
+        self._send_json({"ok": True, **_status_payload(status)})
 
     def _write_sse(self, message: dict[str, Any]) -> None:
         payload = json.dumps(message, separators=(",", ":"))
@@ -127,3 +156,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(content_length))
         self.end_headers()
+
+
+def _status_payload(status: VLLMStatus) -> dict[str, Any]:
+    return {
+        "running": status.running,
+        "pid": status.pid,
+        "command": status.command,
+        "returncode": status.returncode,
+    }

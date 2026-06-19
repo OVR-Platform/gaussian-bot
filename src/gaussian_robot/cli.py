@@ -42,10 +42,10 @@ def info() -> None:
 
 
 @app.command()
-def ui(host: str = "127.0.0.1", port: int = 8787) -> None:
+def ui(host: str = "0.0.0.0", port: int = 8787, start_vllm: bool = False) -> None:
     """Run the local dashboard."""
     rprint(f"[bold]dashboard[/bold] http://{host}:{port}")
-    serve_dashboard(host, port)
+    serve_dashboard(host, port, start_vllm=start_vllm)
 
 
 if __name__ == "__main__":

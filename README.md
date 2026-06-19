@@ -39,6 +39,12 @@ uv sync --extra dev
 # run the CLI
 uv run gaussian-robot --help
 
+# run the dashboard on the LAN
+uv run gaussian-robot ui
+
+# optionally launch vLLM with the configured Hugging Face model id
+uv run gaussian-robot ui --start-vllm
+
 # lint / type-check / test
 uv run ruff check .
 uv run mypy
