@@ -35,7 +35,7 @@ vlm = [
 ]
 # Opt-in: local OpenAI-compatible vLLM server.
 vllm = [
-    "vllm>=0.10,<0.11",
+    "vllm>=0.21,<0.22",
 ]
 # Opt-in: everything for development
 dev = [

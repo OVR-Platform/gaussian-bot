@@ -81,7 +81,6 @@ class VLLMServerProcess:
 
 def vllm_command(config: RunConfig) -> list[str]:
     """Build the vLLM OpenAI-compatible server command."""
-    extra_args = _vllm_extra_args(config)
     return [
         _vllm_executable(),
         "serve",
@@ -90,20 +89,8 @@ def vllm_command(config: RunConfig) -> list[str]:
         config.vllm_host,
         "--port",
         str(config.vllm_port),
-        *extra_args,
+        *config.vllm_extra_args,
     ]
-
-
-def _vllm_extra_args(config: RunConfig) -> list[str]:
-    args = list(config.vllm_extra_args)
-    if _needs_transformers_model_impl(config.vlm_model) and "--model-impl" not in args:
-        args.extend(["--model-impl", "transformers"])
-    return args
-
-
-def _needs_transformers_model_impl(model: str) -> bool:
-    normalized = model.lower().replace("_", "").replace("-", "")
-    return "qwen/qwen3.5" in normalized or "qwen3.5" in normalized
 
 
 def _vllm_executable(candidates: Sequence[Path] | None = None) -> str:
