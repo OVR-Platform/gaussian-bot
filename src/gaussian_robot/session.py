@@ -23,9 +23,11 @@ from gaussian_robot.nav.stop import (
     CoveragePlateau,
     CoverageTarget,
     PoseBudget,
+    QualityTarget,
     SeedExhaustion,
     SessionStopPolicy,
     StopPolicy,
+    StuckGuard,
 )
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import CameraIntrinsics, Pose
@@ -239,29 +241,114 @@ def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
     return np.stack([right, down, forward], axis=0)
 
 
+def _floor_seed_positions(
+    bmin: np.ndarray,
+    bmax: np.ndarray,
+    up_axis: str,
+    n: int,
+) -> list[np.ndarray]:
+    """Spread ``n`` seed positions on a grid across the floor AABB."""
+    a, b = _FLOOR_AXES[up_axis]
+    up_idx = _UP_INDEX[up_axis]
+    side = max(1, math.isqrt(n))
+    xs = np.linspace(bmin[a], bmax[a], side + 2)[1:-1]
+    ys = np.linspace(bmin[b], bmax[b], side + 2)[1:-1]
+    mid_up = float((bmin[up_idx] + bmax[up_idx]) / 2.0)
+    positions: list[np.ndarray] = []
+    for x in xs:
+        for y in ys:
+            pos = np.zeros(3)
+            pos[a] = float(x)
+            pos[b] = float(y)
+            pos[up_idx] = mid_up
+            positions.append(pos)
+    return positions
+
+
+def _positions_from_density(
+    renderer: Renderer,
+    up_axis: str,
+    n: int,
+) -> list[np.ndarray] | None:
+    """Sample ``n`` positions weighted by inverse density (sparse = priority).
+
+    Returns ``None`` when the renderer has no density grid.
+    """
+    cloud = getattr(renderer, "cloud", None)
+    if cloud is None:
+        return None
+    grid = getattr(cloud, "density_grid", None)
+    dbounds = getattr(cloud, "density_bounds", None)
+    if grid is None or dbounds is None:
+        return None
+
+    lo, hi = dbounds
+    gs = grid.shape[0]
+    inv = 1.0 - grid / (grid.max() + 1e-9)
+    flat = inv.ravel()
+    flat_sum = flat.sum()
+    if flat_sum <= 0:
+        return None
+    probs = flat / flat_sum
+
+    up_idx = _UP_INDEX[up_axis]
+    a, b = _FLOOR_AXES[up_axis]
+    mid_up = float((lo[up_idx] + hi[up_idx]) / 2.0)
+
+    rng = np.random.default_rng(seed=42)
+    indices = rng.choice(len(probs), size=n, replace=True, p=probs)
+    positions: list[np.ndarray] = []
+    for idx in indices:
+        row, col = divmod(int(idx), gs)
+        xa = float(lo[a] + (row + 0.5) / gs * (hi[a] - lo[a]))
+        xb = float(lo[b] + (col + 0.5) / gs * (hi[b] - lo[b]))
+        pos = np.zeros(3)
+        pos[a] = xa
+        pos[b] = xb
+        pos[up_idx] = mid_up
+        positions.append(pos)
+    return positions
+
+
 def generate_seeds(
     config: RunConfig,
     bounds_min: np.ndarray | None = None,
     bounds_max: np.ndarray | None = None,
     origin: np.ndarray | None = None,
+    renderer: Renderer | None = None,
 ) -> list[Pose]:
-    """Generate seed pose candidates spread across the scene.
+    """Generate seed pose candidates spread across the scene floor.
 
-    Produces a grid of positions inside the bounds (like the original), plus
-    extra candidates at ``origin`` facing different directions. The caller
-    should validate these with a test render and drop degenerate ones.
+    When a renderer with a density grid is available, seeds are sampled from
+    low-density (sparse) regions so walks start where coverage is most needed.
+    Otherwise, seeds are placed on a regular floor grid. A set of candidates
+    from the known-good ``origin`` (facing different directions) is always
+    appended as a fallback.
     """
     a, b = _FLOOR_AXES[config.up_axis]
     bmin = np.array(config.bounds_min if bounds_min is None else bounds_min, dtype=np.float64)
     bmax = np.array(config.bounds_max if bounds_max is None else bounds_max, dtype=np.float64)
     safe_origin = (bmin + bmax) / 2.0 if origin is None else origin.copy()
 
-    # All seeds from the known-good origin, facing different directions.
-    # The exploration walks will move the robot to other positions.
-    n_candidates = max(config.num_seeds * 2, 8)
+    n_candidates = max(config.num_seeds * 3, 12)
+    frontier: list[np.ndarray] | None = None
+    if renderer is not None:
+        frontier = _positions_from_density(renderer, config.up_axis, n_candidates)
+    if frontier is None:
+        frontier = _floor_seed_positions(bmin, bmax, config.up_axis, n_candidates)
+
     candidates: list[Pose] = []
-    for i in range(n_candidates):
-        angle = 2.0 * math.pi * i / n_candidates
+    for pos in frontier:
+        angle = 2.0 * math.pi * len(candidates) / max(n_candidates, 1)
+        target = pos.copy()
+        target[a] += math.cos(angle)
+        target[b] += math.sin(angle)
+        candidates.append(Pose(position=pos.copy(), rotation=look_at(pos, target, config.up_axis)))
+
+    # Always include origin-facing candidates as a fallback seed pool
+    n_origin = max(config.num_seeds, 4)
+    for i in range(n_origin):
+        angle = 2.0 * math.pi * i / n_origin
         target = safe_origin.copy()
         target[a] += math.cos(angle)
         target[b] += math.sin(angle)
@@ -337,10 +424,12 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     walk_policies: list[StopPolicy] = [
         CoveragePlateau(novelty_delta=space.step, window=5),
         BoundsGuard(),
+        StuckGuard(step=space.step),
     ]
     session_policies: list[SessionStopPolicy] = [
         PoseBudget(max_poses=config.pose_budget),
         CoverageTarget(radius=coverage_radius, tau=0.8),
+        QualityTarget(radius=coverage_radius, tau=0.7),
         SeedExhaustion(),
     ]
     explorer = Explorer(
@@ -359,7 +448,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
     intrinsics = _PREVIEW_INTRINSICS
-    candidates = generate_seeds(config, bmin, bmax, origin=seed_origin)
+    candidates = generate_seeds(config, bmin, bmax, origin=seed_origin, renderer=renderer)
     seeds: list[Pose] = []
     for s in candidates:
         if len(seeds) >= config.num_seeds:

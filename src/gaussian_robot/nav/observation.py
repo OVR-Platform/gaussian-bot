@@ -86,10 +86,14 @@ class ObservationBuilder:
         "PANELS:\n"
         "- [rgb] camera view\n"
         "- [depth] distance map (bright = near/wall, dark = far/open)\n"
-        "- [confidence] reconstruction quality (bright = solid, dark = gaps/holes)\n"
-        "- [map] top-down view rotating with you. Background: red = sparse gaps, "
-        "green = good coverage. Blue dots = visited, green line = trail, "
-        "red arrow = you (up = forward).\n"
+        "- [confidence] per-pixel RENDER ALPHA: bright = solid geometry, dark = gaps/holes/missing surfaces. "
+        "Different from the map — this reflects per-pixel opacity, not training coverage.\n"
+        "- [map] top-down view rotating with you. Background colour = 3DGS TRAINING DENSITY: "
+        "red = sparse (few Gaussians, needs more views), green = dense (well-sampled). "
+        "Blue dots = visited, green line = trail, red arrow = you (up = forward).\n"
+        "\n"
+        "NOTE: the [depth] panel may use relative (non-metric) scale if a monocular depth estimator "
+        "is active. Use wall_distance in [state] for metric distance judgements.\n"
         "\n"
         "CONTEXT:\n"
         "You see the full history of previous frames. Use them to remember what "
@@ -105,6 +109,8 @@ class ObservationBuilder:
         "4. When you see a gap in any direction, commit to reaching it.\n"
         "5. Use DESCRIBE if you feel disoriented or entered a very different area "
         "and want an updated scene summary.\n"
+        "6. LOOK_UP to scan ceilings and tops of objects; LOOK_DOWN to inspect floors. "
+        "Use them when you enter a new area or see incomplete surfaces above/below.\n"
         "\n"
         "WALLS AND OBSTACLES:\n"
         "- If the depth panel is mostly bright or wall_distance in [state] is "
@@ -122,7 +128,7 @@ class ObservationBuilder:
         "- Only stop when coverage is high AND you see no dark/red areas left.\n"
         "- Hitting a dead end is NEVER a reason to stop. Turn around.\n"
         "\n"
-        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|describe|stop>"}.'
+        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|look_up|look_down|describe|stop>"}.'
     )
 
     def build(

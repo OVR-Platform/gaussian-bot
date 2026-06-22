@@ -26,10 +26,14 @@ class Decision:
         termination policies, not by the executor.
     raw_text:
         The full decoded model response, kept for logging/reproducibility.
+    parse_failed:
+        ``True`` when no known action verb was found in the response and the
+        fallback action was used instead.
     """
 
     action: Action
     raw_text: str = ""
+    parse_failed: bool = False
 
 
 @runtime_checkable

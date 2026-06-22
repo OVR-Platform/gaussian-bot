@@ -28,12 +28,14 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _JSON_ACTION_RE = re.compile(r'"action"\s*:\s*"([^"]+)"', re.IGNORECASE)
 
 
-def parse_action(raw: str) -> Action:
+def parse_action(raw: str) -> tuple[Action, bool]:
     """Extract an :class:`Action` from a model response.
 
     Order: strip ``<think>`` blocks -> find ``{"action": "..."}`` JSON ->
-    fall back to any known verb appearing in the text. Raises ``ValueError``
-    if nothing parsable is found.
+    fall back to any known verb appearing in the text.
+
+    Returns a ``(action, parse_failed)`` tuple where ``parse_failed`` is
+    ``True`` when no known verb was found and the fallback was used.
     """
     cleaned = _THINK_RE.sub("", raw).strip()
     m = _JSON_ACTION_RE.search(cleaned)
@@ -44,10 +46,10 @@ def parse_action(raw: str) -> Action:
     for verb in candidates:
         v = verb.strip().lower().strip(",.;:`\"'")
         try:
-            return Action(v)
+            return Action(v), False
         except ValueError:
             continue
-    return Action.FORWARD
+    return Action.TURN_LEFT, True  # fallback: turn rather than drive into a wall
 
 
 def jpeg_data_url(image: np.ndarray, *, quality: int = 80) -> str:
@@ -98,13 +100,35 @@ class QwenVLMClient:
         content.append({"type": "text", "text": observation.prompt})
         return {"role": "user", "content": content}
 
+    @staticmethod
+    def _compress_history(messages: list[dict[str, object]]) -> list[dict[str, object]]:
+        """Strip images from all but the last user message in history."""
+        last_user_idx = max(
+            (i for i, m in enumerate(messages) if m.get("role") == "user"),
+            default=None,
+        )
+        result: list[dict[str, object]] = []
+        for i, msg in enumerate(messages):
+            if msg.get("role") == "user" and i != last_user_idx:
+                content = msg["content"]
+                parts: list[dict[str, object]] = (
+                    [c for c in content if c.get("type") == "text"]
+                    if isinstance(content, list)
+                    else []
+                )
+                result.append({"role": "user", "content": parts})
+            else:
+                result.append(msg)
+        return result
+
     def _complete(self, messages: list[dict[str, object]]) -> str:
         """POST ``messages`` to the endpoint and return the raw response text."""
         import httpx  # noqa: PLC0415
 
+        compressed = self._compress_history(messages)
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": compressed,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -137,7 +161,8 @@ class QwenVLMClient:
 
         raw = self._complete(list(self._history))
         self._history.append({"role": "assistant", "content": raw})
-        return Decision(action=parse_action(raw), raw_text=raw)
+        action, parse_failed = parse_action(raw)
+        return Decision(action=action, raw_text=raw, parse_failed=parse_failed)
 
     def describe(self, observation: Observation) -> str:
         raw = self._complete([self._user_message(observation)])

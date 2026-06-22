@@ -220,7 +220,8 @@ class Explorer:
 
             if action is not Action.STOP and not degenerate:
                 robot.move(next_pose)
-                coverage.add_pose(next_pose, seed_id=seed_id)
+                conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
+                coverage.add_pose(next_pose, seed_id=seed_id, confidence=conf)
                 trail.append(next_pose)
 
             self._emit_step(

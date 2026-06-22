@@ -6,6 +6,7 @@ from gaussian_robot.metrics.coverage import (
     floor_coverage,
     novelty,
     pose_space_coverage,
+    quality_floor_coverage,
 )
 
 __all__ = [
@@ -14,4 +15,5 @@ __all__ = [
     "floor_coverage",
     "novelty",
     "pose_space_coverage",
+    "quality_floor_coverage",
 ]

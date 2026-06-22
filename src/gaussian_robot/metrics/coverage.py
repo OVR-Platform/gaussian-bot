@@ -175,6 +175,43 @@ def floor_coverage(state: CoverageState, *, radius: float, grid_cells: int = 64)
     return float(covered_mask.mean())
 
 
+def quality_floor_coverage(
+    state: CoverageState,
+    *,
+    radius: float,
+    q_min: float = 0.5,
+    grid_cells: int = 64,
+) -> float:
+    """Like floor_coverage but only counting poses with confidence >= q_min.
+
+    A cell is 'well-covered' only if a high-quality observation (render alpha
+    >= q_min) was recorded within radius. This ties the metric to actual
+    reconstruction quality rather than pure visitation.
+    """
+    a, b = _floor_axes_for(state.up_axis)
+    mins = state.bounds_min[[a, b]].astype(np.float64)
+    maxs = state.bounds_max[[a, b]].astype(np.float64)
+    if np.any(maxs <= mins):
+        return 0.0
+
+    hi_q = [s.pose.position for s in state.samples if s.confidence >= q_min]
+    if not hi_q:
+        return 0.0
+
+    xs = np.linspace(mins[0], maxs[0], grid_cells)
+    ys = np.linspace(mins[1], maxs[1], grid_cells)
+    gx, gy = np.meshgrid(xs, ys, indexing="xy")
+    centres = np.stack([gx.ravel(), gy.ravel()], axis=1)
+
+    sampled = floor_xy(np.array(hi_q, dtype=np.float64), state.up_axis)
+    r2 = float(radius) ** 2
+    covered = np.zeros(centres.shape[0], dtype=bool)
+    for s in sampled:
+        d = centres - s
+        covered |= np.einsum("ij,ij->i", d, d) <= r2
+    return float(covered.mean())
+
+
 def pose_space_coverage(
     state: CoverageState, *, radius: float, dir_bins: int = 8, grid_cells: int = 32
 ) -> float:

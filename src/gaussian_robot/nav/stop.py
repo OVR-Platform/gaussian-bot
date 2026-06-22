@@ -14,8 +14,10 @@ Compose many with ``any(...)`` (OR semantics).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
+
+import numpy as np
 
 from gaussian_robot.metrics.coverage import CoverageState, floor_coverage
 from gaussian_robot.nav.action import Action
@@ -108,6 +110,41 @@ class CoveragePlateau:
         return self._count >= self.window
 
 
+@dataclass
+class StuckGuard:
+    """Walk-level policy: stops when the robot makes no net progress over a window.
+
+    Tracks the bounding-box span of recent positions. If the robot hasn't
+    displaced more than ``min_displacement_factor * step`` across the last
+    ``window`` steps, it is considered stuck.
+    """
+
+    step: float
+    window: int = 8
+    min_displacement_factor: float = 0.5
+    _positions: list[np.ndarray] = field(default_factory=list)
+    _triggered: bool = False
+
+    def reset(self) -> None:
+        self._positions.clear()
+        self._triggered = False
+
+    def update(self, ctx: WalkContext) -> None:
+        if ctx.action in (Action.STOP, Action.DESCRIBE) or ctx.degenerate:
+            return
+        self._positions.append(ctx.pose.position.copy())
+        if len(self._positions) > self.window:
+            self._positions.pop(0)
+        if len(self._positions) >= self.window:
+            arr = np.array(self._positions)
+            span = float(np.linalg.norm(arr.max(axis=0) - arr.min(axis=0)))
+            if span < self.step * self.min_displacement_factor:
+                self._triggered = True
+
+    def should_stop(self) -> bool:
+        return self._triggered
+
+
 def any_walk_stop(policies: list[StopPolicy]) -> bool:
     """OR-composition for walk-level policies (excluding step counting)."""
     return any(p.should_stop() for p in policies)
@@ -156,6 +193,38 @@ class CoverageTarget:
 
     def should_stop(self, ctx: SessionContext) -> bool:
         return floor_coverage(ctx.state, radius=self.radius, grid_cells=self.grid_cells) >= self.tau
+
+
+@dataclass
+class QualityTarget:
+    """Stop when quality-weighted floor coverage reaches ``tau``.
+
+    Like CoverageTarget but only counts observations with render alpha >=
+    q_min, so the session ends only when the scene is both visited *and*
+    well-reconstructed.
+    """
+
+    radius: float
+    tau: float = 0.8
+    q_min: float = 0.5
+    grid_cells: int = 64
+
+    def __post_init__(self) -> None:
+        if not 0.0 < self.tau <= 1.0:
+            raise ValueError("tau must be in (0, 1]")
+
+    def should_stop(self, ctx: SessionContext) -> bool:
+        from gaussian_robot.metrics.coverage import quality_floor_coverage  # noqa: PLC0415
+
+        return (
+            quality_floor_coverage(
+                ctx.state,
+                radius=self.radius,
+                q_min=self.q_min,
+                grid_cells=self.grid_cells,
+            )
+            >= self.tau
+        )
 
 
 @dataclass
