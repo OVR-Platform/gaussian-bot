@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from gaussian_robot.events import SessionEndEvent, SessionStartEvent, StepEvent
+from gaussian_robot.events import SceneDescribeEvent, SessionEndEvent, SessionStartEvent, StepEvent
 from gaussian_robot.vlm.qwen import jpeg_data_url
 
 
@@ -38,6 +38,13 @@ def event_to_message(event: Any) -> dict[str, Any]:
             "panels": panels,
             "sampled": event.sampled_floor.tolist(),
             "trail": event.trail_floor.tolist(),
+        }
+    if isinstance(event, SceneDescribeEvent):
+        return {
+            "type": "scene_describe",
+            "seed_id": event.seed_id,
+            "step": event.step,
+            "description": event.description,
         }
     if isinstance(event, SessionEndEvent):
         return {

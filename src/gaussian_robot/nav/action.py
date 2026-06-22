@@ -26,6 +26,7 @@ class Action(StrEnum):
     LOOK_DOWN = "look_down"
     MOVE_UP = "move_up"
     MOVE_DOWN = "move_down"
+    DESCRIBE = "describe"
     STOP = "stop"
 
     @classmethod
@@ -89,7 +90,7 @@ def apply_action(pose: Pose, action: Action, space: ActionSpace, up_axis: str = 
     :mod:`gaussian_robot.nav.stop`). Rotation changes are world-frame rotations
     composed as ``R_new = R_world @ R``.
     """
-    if action is Action.STOP:
+    if action in (Action.STOP, Action.DESCRIBE):
         return pose
 
     if action in (Action.FORWARD, Action.BACK):

@@ -48,6 +48,15 @@ class StepEvent:
 
 
 @dataclass(frozen=True)
+class SceneDescribeEvent:
+    """Emitted when the VLM describes (or re-describes) the scene."""
+
+    seed_id: str
+    step: int
+    description: str
+
+
+@dataclass(frozen=True)
 class SessionEndEvent:
     """Emitted once when the session ends."""
 
@@ -56,5 +65,5 @@ class SessionEndEvent:
     total_poses: int
 
 
-SessionEvent = SessionStartEvent | StepEvent | SessionEndEvent
+SessionEvent = SessionStartEvent | StepEvent | SceneDescribeEvent | SessionEndEvent
 EventSink = Callable[[SessionEvent], None]

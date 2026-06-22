@@ -75,6 +75,9 @@ class ScriptedDemoVLM:
         raw = f'<think>(demo) choosing {verb}</think>\n{{"action": "{verb}"}}'
         return Decision(action=_parse_verb(verb), raw_text=raw)
 
+    def describe(self, observation: Observation) -> str:
+        return "Demo scene: a synthetic test environment with colored panels."
+
 
 def _parse_verb(verb: str) -> Action:
     return Action(verb)

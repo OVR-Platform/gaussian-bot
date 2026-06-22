@@ -88,31 +88,23 @@ class QwenVLMClient:
     def _endpoint(self) -> str:
         return self.base_url.rstrip("/") + "/chat/completions"
 
-    def act(self, observation: Observation) -> Decision:
-        from pathlib import Path  # noqa: PLC0415
-
-        import httpx  # noqa: PLC0415
-
-        dbg = Path("data/vlm_debug")
-        dbg.mkdir(parents=True, exist_ok=True)
-        for label, image in observation.panels:
-            Image.fromarray(image, mode="RGB").save(dbg / f"{label}.png")
-
-        content: list[dict[str, object]] = []
-        for _label, image in observation.panels:
-            content.append({"type": "image_url", "image_url": {"url": jpeg_data_url(image)}})
+    @staticmethod
+    def _user_message(observation: Observation) -> dict[str, object]:
+        """Build a ``user`` message: one image_url per panel plus the prompt text."""
+        content: list[dict[str, object]] = [
+            {"type": "image_url", "image_url": {"url": jpeg_data_url(image)}}
+            for _label, image in observation.panels
+        ]
         content.append({"type": "text", "text": observation.prompt})
+        return {"role": "user", "content": content}
 
-        self._history.append({"role": "user", "content": content})
-
-        if self.max_history_turns > 0:
-            max_msgs = self.max_history_turns * 2
-            if len(self._history) > max_msgs:
-                self._history = self._history[-max_msgs:]
+    def _complete(self, messages: list[dict[str, object]]) -> str:
+        """POST ``messages`` to the endpoint and return the raw response text."""
+        import httpx  # noqa: PLC0415
 
         payload = {
             "model": self.model,
-            "messages": list(self._history),
+            "messages": messages,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -126,8 +118,27 @@ class QwenVLMClient:
             resp = client.post(self._endpoint(), json=payload)
             resp.raise_for_status()
         data = json.loads(resp.content)
-        raw = str(data["choices"][0]["message"]["content"])
+        return str(data["choices"][0]["message"]["content"])
 
+    @staticmethod
+    def _save_debug(observation: Observation) -> None:
+        from pathlib import Path  # noqa: PLC0415
+
+        dbg = Path("data/vlm_debug")
+        dbg.mkdir(parents=True, exist_ok=True)
+        for label, image in observation.panels:
+            Image.fromarray(image, mode="RGB").save(dbg / f"{label}.png")
+
+    def act(self, observation: Observation) -> Decision:
+        self._save_debug(observation)
+        self._history.append(self._user_message(observation))
+        if self.max_history_turns > 0:
+            self._history = self._history[-self.max_history_turns * 2 :]
+
+        raw = self._complete(list(self._history))
         self._history.append({"role": "assistant", "content": raw})
-
         return Decision(action=parse_action(raw), raw_text=raw)
+
+    def describe(self, observation: Observation) -> str:
+        raw = self._complete([self._user_message(observation)])
+        return _THINK_RE.sub("", raw).strip()

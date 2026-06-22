@@ -19,6 +19,11 @@ from gaussian_robot.render.camera import Camera, Pose
 from gaussian_robot.vlm.observation import Observation
 
 
+def _gray_to_rgb(gray: np.ndarray) -> np.ndarray:
+    """Stack a ``(H, W)`` uint8 plane into an ``(H, W, 3)`` RGB image."""
+    return np.stack([gray, gray, gray], axis=-1)
+
+
 def depth_to_uint8(depth: np.ndarray | None) -> np.ndarray:
     """Colormap a depth map to ``(H, W, 3)`` uint8 (near = bright).
 
@@ -36,7 +41,7 @@ def depth_to_uint8(depth: np.ndarray | None) -> np.ndarray:
     span = hi - lo if hi > lo else 1.0
     norm = np.where(finite, 1.0 - (depth - lo) / span, 0.0)
     gray = np.clip(norm * 255.0, 0, 255).astype(np.uint8)
-    return np.stack([gray, gray, gray], axis=-1)
+    return _gray_to_rgb(gray)
 
 
 @dataclass
@@ -64,6 +69,11 @@ class ObservationBuilder:
     map_span: float | None = None
     task: str = ""
     depth_estimator: DepthEstimator | None = None
+    describe_prompt: str = (
+        "Describe the scene you see in 2-3 sentences. What kind of space is this? "
+        "What objects, surfaces, and structures are visible? Note any distinctive "
+        "landmarks or features that could help with orientation."
+    )
     prompt: str = (
         "You are a robot exploring a 3D scene to find gaps in the reconstruction.\n"
         "\n"
@@ -87,6 +97,8 @@ class ObservationBuilder:
         "those are gaps that need you.\n"
         "3. After several forward steps, turn to scan for new gaps.\n"
         "4. When you see a gap in any direction, commit to reaching it.\n"
+        "5. Use DESCRIBE if you feel disoriented or entered a very different area "
+        "and want an updated scene summary.\n"
         "\n"
         "WALLS AND OBSTACLES:\n"
         "- If the depth panel is mostly bright or wall_distance in [state] is "
@@ -104,7 +116,7 @@ class ObservationBuilder:
         "- Only stop when coverage is high AND you see no dark/red areas left.\n"
         "- Hitting a dead end is NEVER a reason to stop. Turn around.\n"
         "\n"
-        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|stop>"}.'
+        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|describe|stop>"}.'
     )
 
     def build(
@@ -118,6 +130,7 @@ class ObservationBuilder:
         action_history: list[str] | None = None,
         coverage_pct: float = 0.0,
         wall_distance: float | None = None,
+        scene_description: str = "",
     ) -> tuple[Observation, RenderResult]:
         """Render the view and assemble the observation.
 
@@ -140,6 +153,8 @@ class ObservationBuilder:
         state_line = self._state_line(camera.pose, step, budget, coverage_pct, wall_distance)
 
         parts = [self.prompt]
+        if scene_description:
+            parts.append(f"SCENE DESCRIPTION: {scene_description}")
         if self.task:
             parts.append(f"TASK: {self.task}")
         if action_history:
@@ -158,14 +173,26 @@ class ObservationBuilder:
         )
         return obs, result
 
+    def build_describe(self, camera: Camera) -> tuple[Observation, RenderResult]:
+        """Render the view and build an observation for scene description only.
+
+        Returns a lightweight observation with just the RGB panel and the
+        describe prompt, plus the underlying :class:`RenderResult`.
+        """
+        result = self.renderer.render(camera)
+        obs = Observation(
+            panels=[("rgb", result.rgb)],
+            prompt=self.describe_prompt,
+        )
+        return obs, result
+
     @staticmethod
     def _confidence_panel(alpha: np.ndarray | None) -> np.ndarray:
         """Render alpha as an opacity map: bright = covered, dark = holes."""
         if alpha is None:
             return np.zeros((512, 512, 3), dtype=np.uint8)
-        h, w = alpha.shape
         gray = (alpha * 255).clip(0, 255).astype(np.uint8)
-        return np.stack([gray, gray, gray], axis=-1)
+        return _gray_to_rgb(gray)
 
     def _state_line(
         self,
@@ -187,13 +214,17 @@ class ObservationBuilder:
 
     def _density_background(self, current: Pose, size: int, span: float) -> Image.Image:
         """Create the map background with density heatmap, rotated to body frame."""
-        if not (hasattr(self.renderer, "cloud") and self.renderer.cloud.density_grid is not None):
+
+        def flat() -> Image.Image:
             return Image.new("RGB", (size, size), (240, 240, 240))
+
+        if not (hasattr(self.renderer, "cloud") and self.renderer.cloud.density_grid is not None):
+            return flat()
 
         density_grid = self.renderer.cloud.density_grid
         db = self.renderer.cloud.density_bounds
         if db is None:
-            return Image.new("RGB", (size, size), (240, 240, 240))
+            return flat()
 
         lo, hi = db
         g = density_grid.shape[0]
@@ -214,7 +245,7 @@ class ObservationBuilder:
         world_w = hi[0] - lo[0]
         world_h = hi[2] - lo[2]
         if world_w < 1e-9 or world_h < 1e-9:
-            return Image.new("RGB", (size, size), (240, 240, 240))
+            return flat()
 
         big = Image.fromarray(hm).resize(
             (max(1, int(g * 4)), max(1, int(g * 4))), Image.Resampling.BILINEAR

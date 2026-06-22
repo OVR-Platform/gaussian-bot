@@ -20,6 +20,7 @@ def test_action_verbs_match_adr() -> None:
         "look_down",
         "move_up",
         "move_down",
+        "describe",
         "stop",
     }
 

@@ -66,6 +66,9 @@ class ScriptedVLM:
         action = next(self._gen)
         return Decision(action=action, raw_text=action.value)
 
+    def describe(self, observation: Observation) -> str:
+        return "Test scene description."
+
 
 def _explorer(
     actions: list[Action],
@@ -99,8 +102,9 @@ def test_walk_runs_to_budget_without_policies() -> None:
     explorer = _explorer([Action.FORWARD], max_steps=4)
     result = explorer.run_walk(Pose(), _state(), seed_id="s0")
     assert result.seed_id == "s0"
-    assert len(result.steps) == 5  # seed step + 4 loop steps
-    assert all(s.action is Action.FORWARD for s in result.steps[1:])
+    assert len(result.steps) == 5  # seed step + 4 loop steps (describe + 3 forward)
+    assert result.steps[1].action is Action.DESCRIBE
+    assert all(s.action is Action.FORWARD for s in result.steps[2:])
 
 
 def test_walk_plateau_stops_early() -> None:
@@ -115,7 +119,7 @@ def test_walk_forward_accumulates_coverage() -> None:
     explorer = _explorer([Action.FORWARD], max_steps=3)
     state = _state()
     explorer.run_walk(Pose(), state, seed_id="s0")
-    assert len(state) == 4  # seed + 3 novel moves added
+    assert len(state) == 3  # seed + 2 forward (step 0 is describe)
 
 
 def test_session_runs_all_seeds_until_exhaustion() -> None:

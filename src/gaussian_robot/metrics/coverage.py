@@ -132,18 +132,17 @@ def novelty(position: np.ndarray, sampled_floor: np.ndarray, up_axis: str) -> fl
     return float(dists.min())
 
 
-def floor_coverage(state: CoverageState, *, radius: float, grid_cells: int = 64) -> float:
-    """Tier-1 metric: fraction of navigable floor cells covered within ``radius``.
+def _floor_grid(state: CoverageState, grid_cells: int) -> tuple[np.ndarray, np.ndarray] | None:
+    """Build the floor-cell centre grid and sampled floor positions.
 
-    A cell is "navigable" if it lies inside the AABB footprint and "covered" if
-    at least one sampled pose is within ``radius`` (floor-plane) of its centre.
-    Cells outside the AABB are ignored.
+    Returns ``(centres, sampled)``, or ``None`` when the AABB footprint is
+    degenerate or no poses have been sampled (both mean zero coverage).
     """
     a, b = _floor_axes_for(state.up_axis)
-    mins = np.array([state.bounds_min[a], state.bounds_min[b]], dtype=np.float64)
-    maxs = np.array([state.bounds_max[a], state.bounds_max[b]], dtype=np.float64)
+    mins = state.bounds_min[[a, b]].astype(np.float64)
+    maxs = state.bounds_max[[a, b]].astype(np.float64)
     if np.any(maxs <= mins):
-        return 0.0
+        return None
 
     xs = np.linspace(mins[0], maxs[0], grid_cells)
     ys = np.linspace(mins[1], maxs[1], grid_cells)
@@ -151,9 +150,23 @@ def floor_coverage(state: CoverageState, *, radius: float, grid_cells: int = 64)
     centres: np.ndarray = np.stack([gx.ravel(), gy.ravel()], axis=1)
 
     sampled = state.floor_positions()
-    r2 = float(radius) ** 2
     if sampled.size == 0:
+        return None
+    return centres, sampled
+
+
+def floor_coverage(state: CoverageState, *, radius: float, grid_cells: int = 64) -> float:
+    """Tier-1 metric: fraction of navigable floor cells covered within ``radius``.
+
+    A cell is "navigable" if it lies inside the AABB footprint and "covered" if
+    at least one sampled pose is within ``radius`` (floor-plane) of its centre.
+    Cells outside the AABB are ignored.
+    """
+    grid = _floor_grid(state, grid_cells)
+    if grid is None:
         return 0.0
+    centres, sampled = grid
+    r2 = float(radius) ** 2
 
     covered_mask = np.zeros(centres.shape[0], dtype=bool)
     for s in sampled:
@@ -171,22 +184,13 @@ def pose_space_coverage(
     *direction bins* its observers face. Returns the fraction of
     ``(cell, bin)`` pairs that are occupied over navigable cells.
     """
-    a, b = _floor_axes_for(state.up_axis)
-    mins = np.array([state.bounds_min[a], state.bounds_min[b]], dtype=np.float64)
-    maxs = np.array([state.bounds_max[a], state.bounds_max[b]], dtype=np.float64)
-    if np.any(maxs <= mins):
+    grid = _floor_grid(state, grid_cells)
+    if grid is None:
         return 0.0
-
-    xs = np.linspace(mins[0], maxs[0], grid_cells)
-    ys = np.linspace(mins[1], maxs[1], grid_cells)
-    gx, gy = np.meshgrid(xs, ys, indexing="xy")
-    centres: np.ndarray = np.stack([gx.ravel(), gy.ravel()], axis=1)
-
-    sampled = state.floor_positions()
+    centres, sampled = grid
     r2 = float(radius) ** 2
-    if sampled.size == 0:
-        return 0.0
 
+    a, b = _floor_axes_for(state.up_axis)
     dirs = np.array([viewing_direction(s.pose.rotation) for s in state.samples], dtype=np.float64)
     dir_a = dirs[:, a]
     dir_b = dirs[:, b]

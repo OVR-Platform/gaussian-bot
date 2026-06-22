@@ -43,3 +43,11 @@ class VLMClient(Protocol):
     def reset(self) -> None: ...
 
     def act(self, observation: Observation) -> Decision: ...
+
+    def describe(self, observation: Observation) -> str:
+        """Describe the scene visible in *observation* without choosing an action.
+
+        The call must NOT affect conversation history used by :meth:`act`.
+        Returns a free-form text description of the scene.
+        """
+        ...

@@ -12,12 +12,14 @@ dashboard) without coupling the core to the UI.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from gaussian_robot.events import (
     EventSink,
+    SceneDescribeEvent,
     SessionEndEvent,
     SessionStartEvent,
     StepEvent,
@@ -44,6 +46,8 @@ from gaussian_robot.render.camera import Pose
 from gaussian_robot.splat.scene import SplatScene
 from gaussian_robot.vlm.client import Decision, VLMClient
 from gaussian_robot.vlm.observation import Observation
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -105,6 +109,34 @@ class Explorer:
     max_steps: int = 40
     event_sink: EventSink | None = None
 
+    def _describe_step(
+        self,
+        robot: Robot,
+        result: WalkResult,
+        action_history: list[str],
+        *,
+        seed_id: str,
+        step: int,
+        raw_text: str = "",
+    ) -> str:
+        """Render the view, describe the scene, and record the describe step."""
+        desc_obs, _ = self.observation_builder.build_describe(robot.camera())
+        description = self.vlm.describe(desc_obs)
+        _log.info("Scene description (seed=%s step=%d): %s", seed_id, step, description)
+        if self.event_sink is not None:
+            self.event_sink(SceneDescribeEvent(seed_id=seed_id, step=step, description=description))
+        action_history.append(Action.DESCRIBE.value)
+        result.steps.append(
+            WalkStep(
+                pose=robot.pose,
+                action=Action.DESCRIBE,
+                novelty=0.0,
+                degenerate=False,
+                raw_text=raw_text or description,
+            )
+        )
+        return description
+
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, seed_id: str = ""
     ) -> WalkResult:
@@ -112,6 +144,8 @@ class Explorer:
         robot = Robot(scene=self.scene, pose=seed_pose)
         for p in self.walk_policies:
             p.reset()
+
+        scene_description = ""
 
         trail: list[Pose] = [seed_pose]
         novelty_seed = coverage.novelty(seed_pose)
@@ -124,6 +158,12 @@ class Explorer:
         action_history: list[str] = []
         prev_render: RenderResult | None = None
         for step_idx in range(self.max_steps):
+            if step_idx == 0:
+                scene_description = self._describe_step(
+                    robot, result, action_history, seed_id=seed_id, step=1
+                )
+                continue
+
             camera = robot.camera()
             cov = floor_coverage(coverage, radius=self.coverage_radius)
             wall_dist = self._wall_distance(prev_render)
@@ -136,9 +176,22 @@ class Explorer:
                 action_history=action_history,
                 coverage_pct=cov,
                 wall_distance=wall_dist,
+                scene_description=scene_description,
             )
             decision = self.vlm.act(observation)
             action = decision.action
+
+            if action is Action.DESCRIBE:
+                scene_description = self._describe_step(
+                    robot,
+                    result,
+                    action_history,
+                    seed_id=seed_id,
+                    step=step_idx + 1,
+                    raw_text=decision.raw_text,
+                )
+                prev_render = render
+                continue
 
             action_history.append(action.value)
             next_pose = apply_action(robot.pose, action, self.action_space, self.scene.up_axis)

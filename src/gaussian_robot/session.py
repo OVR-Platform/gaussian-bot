@@ -28,12 +28,15 @@ from gaussian_robot.nav.stop import (
     StopPolicy,
 )
 from gaussian_robot.render.base import Renderer, RenderResult
-from gaussian_robot.render.camera import Pose
+from gaussian_robot.render.camera import CameraIntrinsics, Pose
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
 from gaussian_robot.vlm.client import VLMClient
 
 _UP_INDEX = {"x": 0, "y": 1, "z": 2}
 _FLOOR_AXES = {"x": (1, 2), "y": (0, 2), "z": (0, 1)}
+
+# Intrinsics shared by every single-frame preview/animation render.
+_PREVIEW_INTRINSICS = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
 
 _cached_renderer: tuple[str, object] | None = None
 
@@ -65,9 +68,9 @@ def _best_origin(
     renderer: Renderer, up_axis: str, bmin: np.ndarray, bmax: np.ndarray
 ) -> np.ndarray:
     """Pick a camera origin with good coverage via density centroid + test renders."""
-    from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose  # noqa: PLC0415
+    from gaussian_robot.render.camera import Camera, Pose  # noqa: PLC0415
 
-    intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
+    intrinsics = _PREVIEW_INTRINSICS
     fc = _floor_centroid(renderer)
     if fc is None:
         if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
@@ -124,25 +127,20 @@ def _load_renderer(
     repeated calls with the same path reuse the GPU tensors.
     """
     global _cached_renderer  # noqa: PLW0603
-    if _cached_renderer is not None and _cached_renderer[0] == ply_path:
-        r = _cached_renderer[1]
-        bounds = r.cloud.bounds  # type: ignore[attr-defined]
-        return r, bounds.min, bounds.max  # type: ignore[return-value]
+    if _cached_renderer is None or _cached_renderer[0] != ply_path:
+        try:
+            from gaussian_robot.backends.gsplat_renderer import GsplatRenderer  # noqa: PLC0415
 
-    try:
-        from gaussian_robot.backends.gsplat_renderer import GsplatRenderer  # noqa: PLC0415
+            r: Renderer = GsplatRenderer.from_path(ply_path, device=device)
+        except (ImportError, ValueError):
+            from gaussian_robot.backends.ply_point import PLYPointRenderer  # noqa: PLC0415
 
-        gsplat_r = GsplatRenderer.from_path(ply_path, device=device)
-        _cached_renderer = (ply_path, gsplat_r)
-        return gsplat_r, gsplat_r.cloud.bounds.min, gsplat_r.cloud.bounds.max
-    except (ImportError, ValueError):
-        pass
+            r = PLYPointRenderer.from_path(ply_path)
+        _cached_renderer = (ply_path, r)
 
-    from gaussian_robot.backends.ply_point import PLYPointRenderer  # noqa: PLC0415
-
-    ply_r = PLYPointRenderer.from_path(ply_path)
-    _cached_renderer = (ply_path, ply_r)
-    return ply_r, ply_r.cloud.bounds.min, ply_r.cloud.bounds.max
+    r = _cached_renderer[1]  # type: ignore[assignment]
+    bounds = r.cloud.bounds  # type: ignore[attr-defined]
+    return r, bounds.min, bounds.max
 
 
 def load_preview(config: RunConfig) -> dict[str, object]:
@@ -157,13 +155,12 @@ def load_preview(config: RunConfig) -> dict[str, object]:
         raise ValueError("no ply_path configured")
     renderer, bmin, bmax = _load_renderer(config.ply_path, device=config.cuda_device)
 
-    from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
+    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
     cam_pos = _best_origin(renderer, config.up_axis, bmin, bmax).copy()
     rot = look_at(cam_pos, cam_pos, config.up_axis)
     pose = Pose(position=cam_pos, rotation=rot)
-    intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
-    camera = Camera(pose=pose, intrinsics=intrinsics)
+    camera = Camera(pose=pose, intrinsics=_PREVIEW_INTRINSICS)
 
     from gaussian_robot.nav.observation import depth_to_uint8  # noqa: PLC0415
 
@@ -196,7 +193,7 @@ def load_preview(config: RunConfig) -> dict[str, object]:
 def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> dict[str, object]:
     """Render an animation of ``n_steps`` forward steps, interpolated into ``n_frames`` per step."""
     from gaussian_robot.nav.action import Action, ActionSpace, apply_action  # noqa: PLC0415
-    from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
+    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
     from gaussian_robot.vlm.qwen import jpeg_data_url  # noqa: PLC0415
 
     if not config.ply_path:
@@ -204,7 +201,7 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
     renderer, bmin, bmax = _load_renderer(config.ply_path, device=config.cuda_device)
     diag = float(np.linalg.norm(bmax - bmin))
     space = ActionSpace(step=config.action_step_fraction * diag)
-    intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
+    intrinsics = _PREVIEW_INTRINSICS
 
     origin = _best_origin(renderer, config.up_axis, bmin, bmax)
 
@@ -359,9 +356,9 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     )
     seed_origin = _best_origin(renderer, config.up_axis, bmin, bmax)
 
-    from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
+    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
-    intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
+    intrinsics = _PREVIEW_INTRINSICS
     candidates = generate_seeds(config, bmin, bmax, origin=seed_origin)
     seeds: list[Pose] = []
     for s in candidates:

@@ -105,6 +105,9 @@ PAGE_HTML = """<!doctype html>
   </div>
   <h2>Global coverage (world frame)</h2>
   <canvas id="world-map" width="400" height="400"></canvas>
+  <h2>Scene description</h2>
+  <pre id="scene-desc" style="white-space:pre-wrap;max-height:140px;overflow:auto;font-size:12px;
+       background:rgba(80,140,80,.12);padding:8px;border-radius:6px;">—</pre>
   <h2>Action log</h2>
   <pre id="action-log" style="white-space:pre-wrap;max-height:120px;overflow:auto;font-size:11px;
        background:rgba(0,0,0,.3);padding:8px;border-radius:6px;">—</pre>
@@ -261,7 +264,15 @@ async function run(endpoint){
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
       document.getElementById("action-log").textContent="";
+      document.getElementById("scene-desc").textContent="—";
       setChips({status:"running", vlm:vlmMode, seeds:m.total_seeds, up:UP}); return; }
+    if(m.type==="scene_describe"){
+      document.getElementById("scene-desc").textContent = m.description || "—";
+      const log = document.getElementById("action-log");
+      log.textContent += `[${m.seed_id} #${m.step}] describe: ${m.description}\n`;
+      log.scrollTop = log.scrollHeight;
+      setChips({seed:m.seed_id, step:m.step, action:"describe"});
+      return; }
     if(m.type==="session_end"){ setStatus("ended: "+m.reason); setChips({status:"ended",reason:m.reason,
       steps:m.total_steps, poses:m.total_poses}); stream.close(); stream=null; stepping=false;
       document.getElementById("btn-next").disabled=true; return; }
