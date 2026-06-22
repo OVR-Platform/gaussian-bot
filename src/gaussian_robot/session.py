@@ -27,7 +27,7 @@ from gaussian_robot.nav.stop import (
     SessionStopPolicy,
     StopPolicy,
 )
-from gaussian_robot.render.base import Renderer
+from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import Pose
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
 from gaussian_robot.vlm.client import VLMClient
@@ -72,12 +72,12 @@ def _best_origin(
     if fc is None:
         if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
             fb = renderer.cloud.full_bounds
-            return (fb.min + fb.max) / 2.0
-        return (bmin + bmax) / 2.0
+            return np.asarray((fb.min + fb.max) / 2.0)
+        return np.asarray((bmin + bmax) / 2.0)
 
     x, z, lo, hi = fc
     up_idx = _UP_INDEX[up_axis]
-    cloud = renderer.cloud  # type: ignore[union-attr]
+    cloud = renderer.cloud  # type: ignore[attr-defined]
     means = cloud.means
     gs = cloud.density_grid.shape[0]
     cell_w = (hi[0] - lo[0]) / gs * 2
@@ -168,6 +168,20 @@ def load_preview(config: RunConfig) -> dict[str, object]:
     from gaussian_robot.nav.observation import depth_to_uint8  # noqa: PLC0415
 
     result = renderer.render(camera)
+    if config.use_depth_estimator:
+        from gaussian_robot.depth.estimator import DA3DepthEstimator  # noqa: PLC0415
+
+        estimator = DA3DepthEstimator(
+            model_name=config.depth_model,
+            device=config.cuda_device,
+        )
+        da3_depth = estimator.estimate(result.rgb)
+        result = RenderResult(
+            rgb=result.rgb,
+            camera=result.camera,
+            depth=da3_depth,
+            alpha=result.alpha,
+        )
     depth_panel = depth_to_uint8(result.depth)
     return {
         "rgb": jpeg_data_url(result.rgb),
@@ -305,11 +319,22 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         up_axis=config.up_axis,
     )
     vlm = build_vlm(config)
+
+    depth_estimator = None
+    if config.use_depth_estimator:
+        from gaussian_robot.depth.estimator import DA3DepthEstimator  # noqa: PLC0415
+
+        depth_estimator = DA3DepthEstimator(
+            model_name=config.depth_model,
+            device=config.cuda_device,
+        )
+
     builder = ObservationBuilder(
         renderer=renderer,
         up_axis=config.up_axis,
         map_size=config.map_size,
         task=config.task_prompt,
+        depth_estimator=depth_estimator,
     )
 
     walk_policies: list[StopPolicy] = [

@@ -56,6 +56,15 @@ class RunConfig(BaseModel):
         default="", description="Optional task for the robot, e.g. 'find the office door'."
     )
 
+    use_depth_estimator: bool = Field(
+        default=False,
+        description="If true, run Depth Anything 3 on each render for the depth panel.",
+    )
+    depth_model: str = Field(
+        default="depth-anything/DA3-BASE",
+        description="HuggingFace model id for Depth Anything 3.",
+    )
+
     vlm_temperature: float = Field(default=1.0, description="Sampling temperature.")
     vlm_top_p: float = Field(default=0.95, description="Nucleus sampling top-p.")
     vlm_top_k: int = Field(default=20, ge=0, description="Top-k sampling.")

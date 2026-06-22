@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image, ImageDraw
 
+from gaussian_robot.depth.estimator import DepthEstimator
 from gaussian_robot.metrics.coverage import CoverageState, floor_xy
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import Camera, Pose
@@ -62,6 +63,7 @@ class ObservationBuilder:
     map_size: int = 512
     map_span: float | None = None
     task: str = ""
+    depth_estimator: DepthEstimator | None = None
     prompt: str = (
         "You are a robot exploring a 3D scene to find gaps in the reconstruction.\n"
         "\n"
@@ -124,6 +126,14 @@ class ObservationBuilder:
         degeneracy / record confidence).
         """
         result = self.renderer.render(camera)
+        if self.depth_estimator is not None:
+            da3_depth = self.depth_estimator.estimate(result.rgb)
+            result = RenderResult(
+                rgb=result.rgb,
+                camera=result.camera,
+                depth=da3_depth,
+                alpha=result.alpha,
+            )
         depth_panel = depth_to_uint8(result.depth)
         confidence_panel = self._confidence_panel(result.alpha)
         map_panel = self._body_frame_map(coverage, camera.pose, trail)
