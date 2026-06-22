@@ -70,9 +70,15 @@ class ObservationBuilder:
     task: str = ""
     depth_estimator: DepthEstimator | None = None
     describe_prompt: str = (
-        "Describe the scene you see in 2-3 sentences. What kind of space is this? "
-        "What objects, surfaces, and structures are visible? Note any distinctive "
-        "landmarks or features that could help with orientation."
+        "This is a render of a 3D Gaussian Splatting (3DGS) reconstruction, not a real photo. "
+        "Blurriness, smearing, or ghosting are reconstruction artifacts — areas where the 3DGS "
+        "model lacks enough training views and needs improvement.\n\n"
+        "Describe the scene in 3-4 sentences:\n"
+        "1. What kind of space or environment is this (room, corridor, outdoor area, etc.)?\n"
+        "2. What are the main objects, surfaces, and structures visible?\n"
+        "3. Which areas look sharp and well-reconstructed vs. blurry/artifact-ridden?\n"
+        "4. Based on what you can see, which directions or areas should be prioritised "
+        "for new viewpoints to improve the reconstruction?"
     )
     prompt: str = (
         "You are a robot exploring a 3D scene to find gaps in the reconstruction.\n"
