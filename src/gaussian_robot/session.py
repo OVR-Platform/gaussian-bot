@@ -61,7 +61,9 @@ def _floor_centroid(renderer: Renderer) -> tuple[float, float, np.ndarray, np.nd
     return x, z, lo, hi
 
 
-def _best_origin(renderer: Renderer, up_axis: str, bmin: np.ndarray, bmax: np.ndarray) -> np.ndarray:
+def _best_origin(
+    renderer: Renderer, up_axis: str, bmin: np.ndarray, bmax: np.ndarray
+) -> np.ndarray:
     """Pick a camera origin with good coverage via density centroid + test renders."""
     from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose  # noqa: PLC0415
 
@@ -192,9 +194,7 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
 
     origin = _best_origin(renderer, config.up_axis, bmin, bmax)
 
-    pose = Pose(
-        position=origin.copy(), rotation=look_at(origin, origin, config.up_axis)
-    )
+    pose = Pose(position=origin.copy(), rotation=look_at(origin, origin, config.up_axis))
     frames: list[str] = []
 
     for _step_i in range(n_steps):
