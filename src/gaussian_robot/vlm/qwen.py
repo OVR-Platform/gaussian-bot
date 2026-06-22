@@ -66,7 +66,12 @@ class QwenVLMClient:
     base_url: str
     model: str
     timeout: float = 60.0
-    temperature: float = 0.7
+    temperature: float = 1.0
+    top_p: float = 0.95
+    top_k: int = 20
+    min_p: float = 0.0
+    presence_penalty: float = 1.5
+    repetition_penalty: float = 1.0
     max_tokens: int = 1024
 
     def _endpoint(self) -> str:
@@ -92,6 +97,11 @@ class QwenVLMClient:
             "messages": [{"role": "user", "content": content}],
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "min_p": self.min_p,
+            "presence_penalty": self.presence_penalty,
+            "repetition_penalty": self.repetition_penalty,
             "chat_template_kwargs": {"enable_thinking": False},
         }
         with httpx.Client(timeout=self.timeout) as client:

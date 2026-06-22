@@ -197,7 +197,16 @@ def build_vlm(config: RunConfig) -> VLMClient:
     if config.use_real_vlm:
         from gaussian_robot.vlm.qwen import QwenVLMClient  # noqa: PLC0415
 
-        return QwenVLMClient(base_url=config.vlm_base_url, model=config.vlm_model)
+        return QwenVLMClient(
+            base_url=config.vlm_base_url,
+            model=config.vlm_model,
+            temperature=config.vlm_temperature,
+            top_p=config.vlm_top_p,
+            top_k=config.vlm_top_k,
+            min_p=config.vlm_min_p,
+            presence_penalty=config.vlm_presence_penalty,
+            repetition_penalty=config.vlm_repetition_penalty,
+        )
     return ScriptedDemoVLM()
 
 

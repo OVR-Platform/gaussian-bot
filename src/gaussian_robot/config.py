@@ -52,6 +52,13 @@ class RunConfig(BaseModel):
         default="", description="Optional task for the robot, e.g. 'find the office door'."
     )
 
+    vlm_temperature: float = Field(default=1.0, description="Sampling temperature.")
+    vlm_top_p: float = Field(default=0.95, description="Nucleus sampling top-p.")
+    vlm_top_k: int = Field(default=20, ge=0, description="Top-k sampling.")
+    vlm_min_p: float = Field(default=0.0, ge=0.0, description="Min-p sampling threshold.")
+    vlm_presence_penalty: float = Field(default=1.5, description="Presence penalty.")
+    vlm_repetition_penalty: float = Field(default=1.0, description="Repetition penalty.")
+
     @field_validator("up_axis")
     @classmethod
     def _check_axis(cls, v: str) -> str:
