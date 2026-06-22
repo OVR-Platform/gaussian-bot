@@ -341,7 +341,9 @@ def generate_seeds(
     if renderer is not None:
         frontier = _positions_from_density(renderer, config.up_axis, n_candidates)
     if frontier is None:
-        frontier = _floor_seed_positions(bmin, bmax, config.up_axis, n_candidates, height=good_height)
+        frontier = _floor_seed_positions(
+            bmin, bmax, config.up_axis, n_candidates, height=good_height
+        )
 
     # Stamp the validated height onto density-sampled positions (they have height=0).
     for pos in frontier:
@@ -459,6 +461,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
 
     intrinsics = _PREVIEW_INTRINSICS
     candidates = generate_seeds(config, bmin, bmax, origin=seed_origin, renderer=renderer)
+
     # Sort candidates by render quality so the best-looking positions are tried first.
     def _seed_score(pose: Pose) -> float:
         r = renderer.render(Camera(pose=pose, intrinsics=intrinsics))
