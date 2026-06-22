@@ -15,7 +15,7 @@ import base64
 import io
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from PIL import Image
@@ -61,7 +61,12 @@ def jpeg_data_url(image: np.ndarray, *, quality: int = 80) -> str:
 
 @dataclass
 class QwenVLMClient:
-    """VLM client over an OpenAI-compatible vLLM endpoint."""
+    """VLM client over an OpenAI-compatible vLLM endpoint.
+
+    Accumulates multi-turn conversation history within a walk so the VLM
+    can see its previous observations and decisions. Call :meth:`reset` at
+    the start of each walk.
+    """
 
     base_url: str
     model: str
@@ -73,6 +78,11 @@ class QwenVLMClient:
     presence_penalty: float = 1.5
     repetition_penalty: float = 1.0
     max_tokens: int = 1024
+    enable_thinking: bool = False
+    _history: list[dict[str, object]] = field(default_factory=list)
+
+    def reset(self) -> None:
+        self._history.clear()
 
     def _endpoint(self) -> str:
         return self.base_url.rstrip("/") + "/chat/completions"
@@ -92,9 +102,11 @@ class QwenVLMClient:
             content.append({"type": "image_url", "image_url": {"url": jpeg_data_url(image)}})
         content.append({"type": "text", "text": observation.prompt})
 
+        self._history.append({"role": "user", "content": content})
+
         payload = {
             "model": self.model,
-            "messages": [{"role": "user", "content": content}],
+            "messages": list(self._history),
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "top_p": self.top_p,
@@ -102,11 +114,14 @@ class QwenVLMClient:
             "min_p": self.min_p,
             "presence_penalty": self.presence_penalty,
             "repetition_penalty": self.repetition_penalty,
-            "chat_template_kwargs": {"enable_thinking": False},
+            "chat_template_kwargs": {"enable_thinking": self.enable_thinking},
         }
         with httpx.Client(timeout=self.timeout) as client:
             resp = client.post(self._endpoint(), json=payload)
             resp.raise_for_status()
         data = json.loads(resp.content)
         raw = str(data["choices"][0]["message"]["content"])
+
+        self._history.append({"role": "assistant", "content": raw})
+
         return Decision(action=parse_action(raw), raw_text=raw)

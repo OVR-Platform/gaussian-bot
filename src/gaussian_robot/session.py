@@ -38,7 +38,84 @@ _FLOOR_AXES = {"x": (1, 2), "y": (0, 2), "z": (0, 1)}
 _cached_renderer: tuple[str, object] | None = None
 
 
-def _load_renderer(ply_path: str) -> tuple[Renderer, np.ndarray, np.ndarray]:
+def _floor_centroid(renderer: Renderer) -> tuple[float, float, np.ndarray, np.ndarray] | None:
+    """Return (x, z) density-weighted centroid and the density bounds, or None."""
+    cloud = getattr(renderer, "cloud", None)
+    if cloud is None:
+        return None
+    grid = getattr(cloud, "density_grid", None)
+    dbounds = getattr(cloud, "density_bounds", None)
+    if grid is None or dbounds is None:
+        return None
+    lo, hi = dbounds
+    gs = grid.shape[0]
+    total = grid.sum()
+    if total <= 0:
+        return None
+    rows = np.arange(gs).reshape(-1, 1)
+    cols = np.arange(gs).reshape(1, -1)
+    cx = float((grid * rows).sum() / total)
+    cz = float((grid * cols).sum() / total)
+    x = lo[0] + (cx + 0.5) / gs * (hi[0] - lo[0])
+    z = lo[2] + (cz + 0.5) / gs * (hi[2] - lo[2])
+    return x, z, lo, hi
+
+
+def _best_origin(renderer: Renderer, up_axis: str, bmin: np.ndarray, bmax: np.ndarray) -> np.ndarray:
+    """Pick a camera origin with good coverage via density centroid + test renders."""
+    from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose  # noqa: PLC0415
+
+    intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
+    fc = _floor_centroid(renderer)
+    if fc is None:
+        if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
+            fb = renderer.cloud.full_bounds
+            return (fb.min + fb.max) / 2.0
+        return (bmin + bmax) / 2.0
+
+    x, z, lo, hi = fc
+    up_idx = _UP_INDEX[up_axis]
+    cloud = renderer.cloud  # type: ignore[union-attr]
+    means = cloud.means
+    gs = cloud.density_grid.shape[0]
+    cell_w = (hi[0] - lo[0]) / gs * 2
+    cell_h = (hi[2] - lo[2]) / gs * 2
+    mask = (
+        (means[:, 0] > x - cell_w)
+        & (means[:, 0] < x + cell_w)
+        & (means[:, 2] > z - cell_h)
+        & (means[:, 2] < z + cell_h)
+    )
+    nearby_up = means[mask, up_idx]
+
+    candidates: list[np.ndarray] = []
+    base = np.array([(lo[i] + hi[i]) / 2.0 for i in range(3)])
+    base[0], base[2] = x, z
+    if nearby_up.numel() > 0:
+        for pct in (0.20, 0.35, 0.50, 0.65, 0.80):
+            c = base.copy()
+            c[up_idx] = float(nearby_up.quantile(pct).cpu())
+            candidates.append(c)
+    else:
+        candidates.append(base)
+
+    best, best_depth = candidates[0], 0.0
+    for c in candidates:
+        rot = look_at(c, c, up_axis)
+        result = renderer.render(Camera(pose=Pose(position=c, rotation=rot), intrinsics=intrinsics))
+        if result.depth is None:
+            continue
+        finite = result.depth[np.isfinite(result.depth)]
+        med = float(np.median(finite)) if finite.size > 0 else 0.0
+        if med > best_depth:
+            best, best_depth = c, med
+
+    return best
+
+
+def _load_renderer(
+    ply_path: str, *, device: str = "cuda:0"
+) -> tuple[Renderer, np.ndarray, np.ndarray]:
     """Load the best available renderer for a PLY file (gsplat > point cloud).
 
     Returns (renderer, bounds_min, bounds_max). Caches the renderer so
@@ -53,7 +130,7 @@ def _load_renderer(ply_path: str) -> tuple[Renderer, np.ndarray, np.ndarray]:
     try:
         from gaussian_robot.backends.gsplat_renderer import GsplatRenderer  # noqa: PLC0415
 
-        gsplat_r = GsplatRenderer.from_path(ply_path)
+        gsplat_r = GsplatRenderer.from_path(ply_path, device=device)
         _cached_renderer = (ply_path, gsplat_r)
         return gsplat_r, gsplat_r.cloud.bounds.min, gsplat_r.cloud.bounds.max
     except (ImportError, ValueError):
@@ -76,17 +153,12 @@ def load_preview(config: RunConfig) -> dict[str, object]:
 
     if not config.ply_path:
         raise ValueError("no ply_path configured")
-    renderer, bmin, bmax = _load_renderer(config.ply_path)
+    renderer, bmin, bmax = _load_renderer(config.ply_path, device=config.cuda_device)
 
     from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
 
-    # Use full bounds center for preview — percentile center can be inside walls.
-    full_center = (bmin + bmax) / 2.0
-    if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
-        fb = renderer.cloud.full_bounds
-        full_center = (fb.min + fb.max) / 2.0
-    cam_pos = full_center.copy()
-    rot = look_at(cam_pos, full_center, config.up_axis)
+    cam_pos = _best_origin(renderer, config.up_axis, bmin, bmax).copy()
+    rot = look_at(cam_pos, cam_pos, config.up_axis)
     pose = Pose(position=cam_pos, rotation=rot)
     intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
     camera = Camera(pose=pose, intrinsics=intrinsics)
@@ -113,18 +185,15 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
 
     if not config.ply_path:
         raise ValueError("no ply_path configured")
-    renderer, bmin, bmax = _load_renderer(config.ply_path)
+    renderer, bmin, bmax = _load_renderer(config.ply_path, device=config.cuda_device)
     diag = float(np.linalg.norm(bmax - bmin))
     space = ActionSpace(step=config.action_step_fraction * diag)
     intrinsics = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
 
-    full_center = (bmin + bmax) / 2.0
-    if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
-        fb = renderer.cloud.full_bounds
-        full_center = (fb.min + fb.max) / 2.0
+    origin = _best_origin(renderer, config.up_axis, bmin, bmax)
 
     pose = Pose(
-        position=full_center.copy(), rotation=look_at(full_center, full_center, config.up_axis)
+        position=origin.copy(), rotation=look_at(origin, origin, config.up_axis)
     )
     frames: list[str] = []
 
@@ -206,6 +275,7 @@ def build_vlm(config: RunConfig) -> VLMClient:
             min_p=config.vlm_min_p,
             presence_penalty=config.vlm_presence_penalty,
             repetition_penalty=config.vlm_repetition_penalty,
+            enable_thinking=config.vlm_enable_thinking,
         )
     return ScriptedDemoVLM()
 
@@ -220,7 +290,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     bmax = np.array(config.bounds_max, dtype=np.float64)
     renderer: Renderer = FakeRenderer()
     if config.ply_path:
-        renderer, bmin, bmax = _load_renderer(config.ply_path)
+        renderer, bmin, bmax = _load_renderer(config.ply_path, device=config.cuda_device)
     diag = float(np.linalg.norm(bmax - bmin))
     if diag <= 0:
         raise ValueError("bounds_max must exceed bounds_min")
@@ -261,11 +331,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         session_policies=session_policies,
         max_steps=config.max_steps,
     )
-    # Use the full-bounds center as seed origin — it's a known open-space position.
-    seed_origin = (bmin + bmax) / 2.0
-    if hasattr(renderer, "cloud") and hasattr(renderer.cloud, "full_bounds"):
-        fb = renderer.cloud.full_bounds
-        seed_origin = (fb.min + fb.max) / 2.0
+    seed_origin = _best_origin(renderer, config.up_axis, bmin, bmax)
 
     from gaussian_robot.render.camera import Camera, CameraIntrinsics  # noqa: PLC0415
 

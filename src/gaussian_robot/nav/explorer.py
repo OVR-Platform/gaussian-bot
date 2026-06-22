@@ -108,6 +108,7 @@ class Explorer:
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, seed_id: str = ""
     ) -> WalkResult:
+        self.vlm.reset()
         robot = Robot(scene=self.scene, pose=seed_pose)
         for p in self.walk_policies:
             p.reset()
@@ -120,10 +121,12 @@ class Explorer:
             WalkStep(pose=seed_pose, action=Action.STOP, novelty=novelty_seed, degenerate=False)
         )
 
-        stuck_counter = 0
         action_history: list[str] = []
+        prev_render: RenderResult | None = None
         for step_idx in range(self.max_steps):
             camera = robot.camera()
+            cov = floor_coverage(coverage, radius=self.coverage_radius)
+            wall_dist = self._wall_distance(prev_render)
             observation, render = self.observation_builder.build(
                 camera,
                 coverage,
@@ -131,27 +134,11 @@ class Explorer:
                 step=step_idx + 1,
                 budget=self.max_steps,
                 action_history=action_history,
+                coverage_pct=cov,
+                wall_distance=wall_dist,
             )
             decision = self.vlm.act(observation)
             action = decision.action
-
-            if action not in (Action.FORWARD, Action.BACK, Action.STOP):
-                stuck_counter += 1
-            else:
-                stuck_counter = 0
-            if stuck_counter >= 3:
-                action = Action.FORWARD
-                stuck_counter = 0
-
-            # Collision check: if moving forward/back, sample depth from the
-            # horizontal band of the image (middle rows, full width) which
-            # corresponds to the floor-level path regardless of camera pitch.
-            if action in (Action.FORWARD, Action.BACK) and render.depth is not None:
-                h, w = render.depth.shape
-                horizon_band = render.depth[2 * h // 5 : 3 * h // 5, :]
-                finite = horizon_band[np.isfinite(horizon_band)]
-                if finite.size > 0 and float(np.median(finite)) < self.action_space.step * 1.5:
-                    action = Action.BACK
 
             action_history.append(action.value)
             next_pose = apply_action(robot.pose, action, self.action_space, self.scene.up_axis)
@@ -195,6 +182,8 @@ class Explorer:
                 coverage,
                 trail,
             )
+
+            prev_render = render
 
             if any_walk_stop(self.walk_policies):
                 break
@@ -278,6 +267,17 @@ class Explorer:
                 trail_floor=_floor_array(trail, self.scene.up_axis),
             )
         )
+
+    def _wall_distance(self, render: RenderResult | None) -> float | None:
+        """Median depth in the horizontal band ahead, or None if unavailable."""
+        if render is None or render.depth is None:
+            return None
+        h, w = render.depth.shape
+        band = render.depth[2 * h // 5 : 3 * h // 5, :]
+        finite = band[np.isfinite(band)]
+        if finite.size == 0:
+            return None
+        return float(np.median(finite))
 
     def _is_degenerate(self, pose: Pose, render: RenderResult) -> bool:
         out_of_bounds = bool(

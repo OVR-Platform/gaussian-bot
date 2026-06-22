@@ -63,26 +63,45 @@ class ObservationBuilder:
     map_span: float | None = None
     task: str = ""
     prompt: str = (
-        "You are a robot exploring a 3D reconstructed scene. Move through the "
-        "space to find areas where the 3D reconstruction has gaps or artifacts.\n"
-        "Panels:\n"
-        "- [rgb] your current camera view\n"
-        "- [depth] distance map (bright = near, dark = far)\n"
-        "- [confidence] render opacity (bright = solid coverage, dark = holes/gaps "
-        "that need more coverage)\n"
-        "- [map] top-down map rotating with you. Background shows reconstruction "
-        "density (red = sparse/gaps, green = dense/good). Blue dots = visited, "
-        "green line = trail, red arrow = you (up = forward).\n"
-        "RULES:\n"
-        "- Your primary action should be FORWARD. Always move forward if the "
-        "path is clear.\n"
-        "- Turn to face DARK areas in the confidence panel or RED areas in the "
-        "map — those are gaps that need exploration.\n"
-        "- Vary your direction. Do NOT keep going straight forever. Alternate: "
-        "forward several steps, then turn to explore a new corridor.\n"
-        "- Use back if you are too close to a wall (depth panel mostly bright).\n"
-        "- Only stop after at least 20 steps AND when you see no more red areas.\n"
-        "- Check your [history] — avoid repeating the same pattern.\n"
+        "You are a robot exploring a 3D scene to find gaps in the reconstruction.\n"
+        "\n"
+        "PANELS:\n"
+        "- [rgb] camera view\n"
+        "- [depth] distance map (bright = near/wall, dark = far/open)\n"
+        "- [confidence] reconstruction quality (bright = solid, dark = gaps/holes)\n"
+        "- [map] top-down view rotating with you. Background: red = sparse gaps, "
+        "green = good coverage. Blue dots = visited, green line = trail, "
+        "red arrow = you (up = forward).\n"
+        "\n"
+        "CONTEXT:\n"
+        "You see the full history of previous frames. Use them to remember what "
+        "you were heading toward and why. If you spotted a gap and turned toward "
+        "it, follow through.\n"
+        "The [state] line shows your coverage %, step count, and wall distance.\n"
+        "\n"
+        "STRATEGY:\n"
+        "1. FORWARD is your default. Move forward when the path is open.\n"
+        "2. Seek out DARK regions in confidence and RED regions in the map — "
+        "those are gaps that need you.\n"
+        "3. After several forward steps, turn to scan for new gaps.\n"
+        "4. When you see a gap in any direction, commit to reaching it.\n"
+        "\n"
+        "WALLS AND OBSTACLES:\n"
+        "- If the depth panel is mostly bright or wall_distance in [state] is "
+        "small, you are facing a wall.\n"
+        "- A wall is NOT a reason to stop. Back up, turn, and go somewhere else.\n"
+        "- If you see the same wall for several frames, you are stuck. Turn the "
+        "OTHER direction or back up more aggressively.\n"
+        "- Check [history]: if it shows repeating patterns like "
+        "forward,back,forward,back you are oscillating. Break the loop by "
+        "turning.\n"
+        "\n"
+        "STOPPING:\n"
+        "- Check the coverage % in [state]. If coverage is below 90%, there are "
+        "gaps you haven't reached yet. Do NOT stop.\n"
+        "- Only stop when coverage is high AND you see no dark/red areas left.\n"
+        "- Hitting a dead end is NEVER a reason to stop. Turn around.\n"
+        "\n"
         'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|stop>"}.'
     )
 
@@ -95,6 +114,8 @@ class ObservationBuilder:
         step: int = 0,
         budget: int = 0,
         action_history: list[str] | None = None,
+        coverage_pct: float = 0.0,
+        wall_distance: float | None = None,
     ) -> tuple[Observation, RenderResult]:
         """Render the view and assemble the observation.
 
@@ -106,7 +127,7 @@ class ObservationBuilder:
         depth_panel = depth_to_uint8(result.depth)
         confidence_panel = self._confidence_panel(result.alpha)
         map_panel = self._body_frame_map(coverage, camera.pose, trail)
-        state_line = self._state_line(camera.pose, step, budget)
+        state_line = self._state_line(camera.pose, step, budget, coverage_pct, wall_distance)
 
         parts = [self.prompt]
         if self.task:
@@ -136,12 +157,23 @@ class ObservationBuilder:
         gray = (alpha * 255).clip(0, 255).astype(np.uint8)
         return np.stack([gray, gray, gray], axis=-1)
 
-    def _state_line(self, pose: Pose, step: int, budget: int) -> str:
+    def _state_line(
+        self,
+        pose: Pose,
+        step: int,
+        budget: int,
+        coverage_pct: float = 0.0,
+        wall_distance: float | None = None,
+    ) -> str:
         step_str = f"{step}/{budget}" if budget > 0 else str(step)
-        return (
-            f"[state] step {step_str}; pose "
-            f"({pose.position[0]:.2f},{pose.position[1]:.2f},{pose.position[2]:.2f})"
-        )
+        parts = [
+            f"[state] step {step_str}",
+            f"coverage {coverage_pct:.0%}",
+            f"pose ({pose.position[0]:.2f},{pose.position[1]:.2f},{pose.position[2]:.2f})",
+        ]
+        if wall_distance is not None:
+            parts.append(f"wall ahead {wall_distance:.2f}m")
+        return "; ".join(parts)
 
     def _density_background(self, current: Pose, size: int, span: float) -> Image.Image:
         """Create the map background with density heatmap, rotated to body frame."""

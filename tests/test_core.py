@@ -87,6 +87,7 @@ def test_renderer_protocol_is_runtime_checkable() -> None:
 
 def test_vlmclient_protocol_is_runtime_checkable() -> None:
     class _FakeVLM:
+        def reset(self) -> None: ...
         def act(self, observation: object) -> object: ...
 
     assert isinstance(_FakeVLM(), VLMClient)

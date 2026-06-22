@@ -34,6 +34,10 @@ class RunConfig(BaseModel):
     vllm_port: int = Field(default=8000, ge=1, le=65535)
     vllm_extra_args: list[str] = Field(default_factory=list)
 
+    cuda_device: str = Field(
+        default="cuda:0", description="CUDA device for the splat renderer, e.g. cuda:0, cuda:1."
+    )
+
     up_axis: str = Field(default="y")
     bounds_min: tuple[float, float, float] = Field(default=(0.0, 0.0, 0.0))
     bounds_max: tuple[float, float, float] = Field(default=(10.0, 10.0, 10.0))
@@ -58,6 +62,9 @@ class RunConfig(BaseModel):
     vlm_min_p: float = Field(default=0.0, ge=0.0, description="Min-p sampling threshold.")
     vlm_presence_penalty: float = Field(default=1.5, description="Presence penalty.")
     vlm_repetition_penalty: float = Field(default=1.0, description="Repetition penalty.")
+    vlm_enable_thinking: bool = Field(
+        default=False, description="If true, enable 'thinking' mode in the chat template."
+    )
 
     @field_validator("up_axis")
     @classmethod

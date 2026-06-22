@@ -34,6 +34,12 @@ class Decision:
 
 @runtime_checkable
 class VLMClient(Protocol):
-    """Consumes an observation and returns a decision."""
+    """Consumes an observation and returns a decision.
+
+    Implementations may accumulate conversation history across calls to
+    :meth:`act`. Call :meth:`reset` at the start of each walk to clear it.
+    """
+
+    def reset(self) -> None: ...
 
     def act(self, observation: Observation) -> Decision: ...

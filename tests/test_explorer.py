@@ -55,6 +55,9 @@ class ScriptedVLM:
     def __post_init__(self) -> None:
         self._gen = cycle(self.actions)
 
+    def reset(self) -> None:
+        pass
+
     def act(self, observation: Observation) -> Decision:
         assert isinstance(observation, Observation)
         assert len(observation.panels) == 4

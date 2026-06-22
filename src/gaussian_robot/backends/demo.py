@@ -66,6 +66,9 @@ class ScriptedDemoVLM:
         self._script = script or _DEMO_SCRIPT
         self._idx = 0
 
+    def reset(self) -> None:
+        pass
+
     def act(self, observation: Observation) -> Decision:
         verb = self._script[self._idx % len(self._script)]
         self._idx += 1
