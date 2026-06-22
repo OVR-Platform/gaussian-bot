@@ -106,7 +106,7 @@ def _best_origin(
     else:
         candidates.append(base)
 
-    best, best_depth = candidates[0], 0.0
+    best, best_score = candidates[0], -1.0
     for c in candidates:
         rot = look_at(c, c, up_axis)
         result = renderer.render(Camera(pose=Pose(position=c, rotation=rot), intrinsics=intrinsics))
@@ -114,8 +114,11 @@ def _best_origin(
             continue
         finite = result.depth[np.isfinite(result.depth)]
         med = float(np.median(finite)) if finite.size > 0 else 0.0
-        if med > best_depth:
-            best, best_depth = c, med
+        alpha_mean = float(result.alpha.mean()) if result.alpha is not None else 0.5
+        # Score combines depth (scene visible) with alpha (scene reconstructed).
+        score = med * alpha_mean
+        if score > best_score:
+            best, best_score = c, score
 
     return best
 
@@ -270,7 +273,8 @@ def _positions_from_density(
     up_axis: str,
     n: int,
 ) -> list[np.ndarray] | None:
-    """Sample ``n`` positions weighted by inverse density (sparse = priority).
+    """Sample ``n`` positions weighted by sqrt(density) so seeds spread across the scene
+    but prefer reconstructed, navigable areas rather than empty holes.
 
     Returns ``None`` when the renderer has no density grid.
     """
@@ -284,8 +288,8 @@ def _positions_from_density(
 
     lo, hi = dbounds
     gs = grid.shape[0]
-    inv = 1.0 - grid / (grid.max() + 1e-9)
-    flat = inv.ravel()
+    weighted = np.sqrt(grid / (grid.max() + 1e-9))
+    flat = weighted.ravel()
     flat_sum = flat.sum()
     if flat_sum <= 0:
         return None
@@ -449,8 +453,20 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
 
     intrinsics = _PREVIEW_INTRINSICS
     candidates = generate_seeds(config, bmin, bmax, origin=seed_origin, renderer=renderer)
+    # Sort candidates by render quality so the best-looking positions are tried first.
+    def _seed_score(pose: Pose) -> float:
+        r = renderer.render(Camera(pose=pose, intrinsics=intrinsics))
+        if r.depth is None:
+            return -1.0
+        finite = r.depth[np.isfinite(r.depth)]
+        med = float(np.median(finite)) if finite.size > 0 else 0.0
+        alpha = float(r.alpha.mean()) if r.alpha is not None else 0.5
+        return med * alpha
+
+    scored = sorted(candidates, key=_seed_score, reverse=True)
+
     seeds: list[Pose] = []
-    for s in candidates:
+    for s in scored:
         if len(seeds) >= config.num_seeds:
             break
         result = renderer.render(Camera(pose=s, intrinsics=intrinsics))
@@ -459,11 +475,12 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         finite_frac = float(np.isfinite(result.depth).mean())
         near = result.depth[np.isfinite(result.depth)]
         median_depth = float(np.median(near)) if near.size > 0 else 0.0
-        if finite_frac < 0.5 or median_depth < space.step:
+        alpha_mean = float(result.alpha.mean()) if result.alpha is not None else 1.0
+        if finite_frac < 0.5 or median_depth < space.step or alpha_mean < 0.15:
             continue
         seeds.append(s)
     if not seeds:
-        seeds = [candidates[0]]
+        seeds = [scored[0]]
 
     coverage = CoverageState.empty(config.up_axis, bmin, bmax)
     return explorer, seeds, coverage
