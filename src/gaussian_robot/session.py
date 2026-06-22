@@ -249,21 +249,21 @@ def _floor_seed_positions(
     bmax: np.ndarray,
     up_axis: str,
     n: int,
+    height: float = 0.0,
 ) -> list[np.ndarray]:
-    """Spread ``n`` seed positions on a grid across the floor AABB."""
+    """Spread ``n`` seed positions on a grid across the floor AABB at ``height``."""
     a, b = _FLOOR_AXES[up_axis]
     up_idx = _UP_INDEX[up_axis]
     side = max(1, math.isqrt(n))
     xs = np.linspace(bmin[a], bmax[a], side + 2)[1:-1]
     ys = np.linspace(bmin[b], bmax[b], side + 2)[1:-1]
-    mid_up = float((bmin[up_idx] + bmax[up_idx]) / 2.0)
     positions: list[np.ndarray] = []
     for x in xs:
         for y in ys:
             pos = np.zeros(3)
             pos[a] = float(x)
             pos[b] = float(y)
-            pos[up_idx] = mid_up
+            pos[up_idx] = height
             positions.append(pos)
     return positions
 
@@ -295,9 +295,7 @@ def _positions_from_density(
         return None
     probs = flat / flat_sum
 
-    up_idx = _UP_INDEX[up_axis]
     a, b = _FLOOR_AXES[up_axis]
-    mid_up = float((lo[up_idx] + hi[up_idx]) / 2.0)
 
     rng = np.random.default_rng(seed=42)
     indices = rng.choice(len(probs), size=n, replace=True, p=probs)
@@ -309,7 +307,7 @@ def _positions_from_density(
         pos = np.zeros(3)
         pos[a] = xa
         pos[b] = xb
-        pos[up_idx] = mid_up
+        # Height is filled in by generate_seeds using the validated origin height.
         positions.append(pos)
     return positions
 
@@ -330,16 +328,24 @@ def generate_seeds(
     appended as a fallback.
     """
     a, b = _FLOOR_AXES[config.up_axis]
+    up_idx = _UP_INDEX[config.up_axis]
     bmin = np.array(config.bounds_min if bounds_min is None else bounds_min, dtype=np.float64)
     bmax = np.array(config.bounds_max if bounds_max is None else bounds_max, dtype=np.float64)
     safe_origin = (bmin + bmax) / 2.0 if origin is None else origin.copy()
+    # Use the render-validated origin height for all seeds so they start at the
+    # same elevation as a known-good camera position rather than mid-bounding-box.
+    good_height = float(safe_origin[up_idx])
 
     n_candidates = max(config.num_seeds * 3, 12)
     frontier: list[np.ndarray] | None = None
     if renderer is not None:
         frontier = _positions_from_density(renderer, config.up_axis, n_candidates)
     if frontier is None:
-        frontier = _floor_seed_positions(bmin, bmax, config.up_axis, n_candidates)
+        frontier = _floor_seed_positions(bmin, bmax, config.up_axis, n_candidates, height=good_height)
+
+    # Stamp the validated height onto density-sampled positions (they have height=0).
+    for pos in frontier:
+        pos[up_idx] = good_height
 
     candidates: list[Pose] = []
     for pos in frontier:
