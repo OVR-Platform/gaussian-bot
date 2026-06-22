@@ -65,6 +65,11 @@ class RunConfig(BaseModel):
     vlm_enable_thinking: bool = Field(
         default=False, description="If true, enable 'thinking' mode in the chat template."
     )
+    vlm_max_history_turns: int = Field(
+        default=3,
+        ge=0,
+        description="Max conversation turns kept for multi-turn VLM history. 0 = stateless.",
+    )
 
     @field_validator("up_axis")
     @classmethod

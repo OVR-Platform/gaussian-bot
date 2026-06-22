@@ -276,6 +276,7 @@ def build_vlm(config: RunConfig) -> VLMClient:
             presence_penalty=config.vlm_presence_penalty,
             repetition_penalty=config.vlm_repetition_penalty,
             enable_thinking=config.vlm_enable_thinking,
+            max_history_turns=config.vlm_max_history_turns,
         )
     return ScriptedDemoVLM()
 

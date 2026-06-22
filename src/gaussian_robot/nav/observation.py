@@ -102,7 +102,7 @@ class ObservationBuilder:
         "- Only stop when coverage is high AND you see no dark/red areas left.\n"
         "- Hitting a dead end is NEVER a reason to stop. Turn around.\n"
         "\n"
-        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|stop>"}.'
+        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|stop>"}.'
     )
 
     def build(

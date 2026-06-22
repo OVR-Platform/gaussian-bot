@@ -79,6 +79,7 @@ class QwenVLMClient:
     repetition_penalty: float = 1.0
     max_tokens: int = 1024
     enable_thinking: bool = False
+    max_history_turns: int = 3
     _history: list[dict[str, object]] = field(default_factory=list)
 
     def reset(self) -> None:
@@ -103,6 +104,11 @@ class QwenVLMClient:
         content.append({"type": "text", "text": observation.prompt})
 
         self._history.append({"role": "user", "content": content})
+
+        if self.max_history_turns > 0:
+            max_msgs = self.max_history_turns * 2
+            if len(self._history) > max_msgs:
+                self._history = self._history[-max_msgs:]
 
         payload = {
             "model": self.model,

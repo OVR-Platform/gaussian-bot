@@ -24,6 +24,8 @@ class Action(StrEnum):
     TURN_RIGHT = "turn_right"
     LOOK_UP = "look_up"
     LOOK_DOWN = "look_down"
+    MOVE_UP = "move_up"
+    MOVE_DOWN = "move_down"
     STOP = "stop"
 
     @classmethod
@@ -102,6 +104,12 @@ def apply_action(pose: Pose, action: Action, space: ActionSpace, up_axis: str = 
         r_world = _rotation_about_axis(up, sign * space.delta_rot)
         new_rot: np.ndarray = r_world @ pose.rotation
         return Pose(position=pose.position, rotation=new_rot)
+
+    if action in (Action.MOVE_UP, Action.MOVE_DOWN):
+        up = up_vector(up_axis)
+        sign = 1.0 if action is Action.MOVE_UP else -1.0
+        new_pos = pose.position + sign * space.step * up
+        return Pose(position=new_pos, rotation=pose.rotation)
 
     # LOOK_UP / LOOK_DOWN: rotate about the camera's current right axis.
     right = pose.right()

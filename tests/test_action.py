@@ -18,6 +18,8 @@ def test_action_verbs_match_adr() -> None:
         "turn_right",
         "look_up",
         "look_down",
+        "move_up",
+        "move_down",
         "stop",
     }
 
@@ -60,3 +62,17 @@ def test_forward_stays_level_when_looking_up() -> None:
     assert looking_up.forward()[1] > 0.4  # genuinely pitched up toward +Y
     moved = apply_action(looking_up, Action.FORWARD, _SPACE, up_axis="y")
     assert abs(moved.position[1]) < 1e-9  # translation stays on floor plane
+
+
+def test_move_up_translates_along_up_axis() -> None:
+    pose = Pose(position=np.zeros(3))
+    moved = apply_action(pose, Action.MOVE_UP, _SPACE, up_axis="y")
+    assert np.allclose(moved.position, [0.0, 1.0, 0.0])
+    assert np.allclose(moved.rotation, pose.rotation)
+
+
+def test_move_down_translates_opposite_up_axis() -> None:
+    pose = Pose(position=np.array([0.0, 5.0, 0.0]))
+    moved = apply_action(pose, Action.MOVE_DOWN, _SPACE, up_axis="y")
+    assert np.allclose(moved.position, [0.0, 4.0, 0.0])
+    assert np.allclose(moved.rotation, pose.rotation)
