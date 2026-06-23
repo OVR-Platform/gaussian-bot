@@ -23,6 +23,7 @@ from gaussian_robot.events import (
     SessionEndEvent,
     SessionStartEvent,
     StepEvent,
+    WalkEndEvent,
 )
 from gaussian_robot.metrics.coverage import (
     CoverageState,
@@ -30,16 +31,16 @@ from gaussian_robot.metrics.coverage import (
     floor_xy,
     pose_space_coverage,
 )
-from gaussian_robot.nav.action import Action, ActionSpace, apply_action
-from gaussian_robot.nav.observation import ObservationBuilder
+from gaussian_robot.nav.action import Action, ActionSpace, apply_action, capped_forward_step
+from gaussian_robot.nav.observation import ObservationBuilder, wall_distance_from_depth
 from gaussian_robot.nav.robot import Robot
 from gaussian_robot.nav.stop import (
     SessionContext,
     SessionStopPolicy,
     StopPolicy,
     WalkContext,
-    any_session_stop,
-    any_walk_stop,
+    session_stop_reason,
+    walk_stop_reason,
 )
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import Pose
@@ -59,6 +60,7 @@ class WalkStep:
     novelty: float
     degenerate: bool
     raw_text: str = ""
+    blocked: bool = False
 
 
 @dataclass
@@ -67,6 +69,7 @@ class WalkResult:
 
     seed_id: str
     steps: list[WalkStep] = field(default_factory=list)
+    stop_reason: str = ""
 
     @property
     def poses(self) -> list[Pose]:
@@ -156,7 +159,7 @@ class Explorer:
         )
 
         action_history: list[str] = []
-        prev_render: RenderResult | None = None
+        stop_reason = "step_budget"
         for step_idx in range(self.max_steps):
             if step_idx == 0:
                 scene_description = self._describe_step(
@@ -166,7 +169,6 @@ class Explorer:
 
             camera = robot.camera()
             cov = floor_coverage(coverage, radius=self.coverage_radius)
-            wall_dist = self._wall_distance(prev_render)
             observation, render = self.observation_builder.build(
                 camera,
                 coverage,
@@ -175,7 +177,6 @@ class Explorer:
                 budget=self.max_steps,
                 action_history=action_history,
                 coverage_pct=cov,
-                wall_distance=wall_dist,
                 scene_description=scene_description,
             )
             decision = self.vlm.act(observation)
@@ -190,11 +191,16 @@ class Explorer:
                     step=step_idx + 1,
                     raw_text=decision.raw_text,
                 )
-                prev_render = render
                 continue
 
             action_history.append(action.value)
-            next_pose = apply_action(robot.pose, action, self.action_space, self.scene.up_axis)
+            # Free distance ahead from the *current* metric render caps a forward
+            # step so the camera halts short of obstacles instead of burrowing in.
+            clearance = wall_distance_from_depth(render.depth)
+            next_pose = apply_action(
+                robot.pose, action, self.action_space, self.scene.up_axis, clearance=clearance
+            )
+            blocked = self._forward_blocked(action, clearance)
             novelty_next = coverage.novelty(next_pose)
             degenerate = self._is_degenerate(next_pose, render)
 
@@ -215,10 +221,11 @@ class Explorer:
                     novelty=novelty_next,
                     degenerate=degenerate,
                     raw_text=decision.raw_text,
+                    blocked=blocked,
                 )
             )
 
-            if action is not Action.STOP and not degenerate:
+            if action is not Action.STOP and not degenerate and not blocked:
                 robot.move(next_pose)
                 conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
                 coverage.add_pose(next_pose, seed_id=seed_id, confidence=conf)
@@ -235,17 +242,36 @@ class Explorer:
                 degenerate,
                 coverage,
                 trail,
+                blocked=blocked,
             )
 
-            prev_render = render
-
-            if any_walk_stop(self.walk_policies):
+            reason = walk_stop_reason(self.walk_policies)
+            if reason is not None:
+                stop_reason = reason
                 break
 
+        result.stop_reason = stop_reason
+        if self.event_sink is not None:
+            self.event_sink(
+                WalkEndEvent(seed_id=seed_id, reason=stop_reason, steps=len(result.steps))
+            )
         return result
 
+    def _forward_blocked(self, action: Action, clearance: float | None) -> bool:
+        """True when a FORWARD step is capped to (near) zero by an obstacle ahead."""
+        if action is not Action.FORWARD or clearance is None:
+            return False
+        return capped_forward_step(self.action_space.step, clearance) <= 1e-6
+
     def run_session(self, seed_poses: list[Pose], coverage: CoverageState) -> list[WalkResult]:
-        """Launch a walk per seed into the shared ``coverage`` until session stop."""
+        """Launch a walk per seed into the shared ``coverage`` until session stop.
+
+        Session policies are evaluated **after** each walk against the coverage
+        that walk produced — so the gain attributed to walk *i* is genuinely
+        walk *i*'s, the final walk is also subject to the policies, and the
+        recorded ``reason`` names the policy that fired (or ``seeds_exhausted``
+        when the seed list runs out).
+        """
         if self.event_sink is not None:
             self.event_sink(
                 SessionStartEvent(
@@ -253,34 +279,34 @@ class Explorer:
                     bounds_max=coverage.bounds_max,
                     up_axis=coverage.up_axis,
                     total_seeds=len(seed_poses),
+                    seed_floor=_floor_array(seed_poses, coverage.up_axis),
                 )
             )
 
         results: list[WalkResult] = []
         prev_cov = floor_coverage(coverage, radius=self.coverage_radius)
-        stopped = False
+        reason = "seeds_exhausted"
         for i, seed in enumerate(seed_poses):
-            gain = 0.0
-            if i > 0:
-                cur_cov = floor_coverage(coverage, radius=self.coverage_radius)
-                gain = cur_cov - prev_cov
-                prev_cov = cur_cov
+            results.append(self.run_walk(seed, coverage, seed_id=f"seed{i}"))
+            cur_cov = floor_coverage(coverage, radius=self.coverage_radius)
+            gain = cur_cov - prev_cov
+            prev_cov = cur_cov
             ctx = SessionContext(
                 state=coverage,
-                walks_completed=i,
+                walks_completed=i + 1,
                 total_seeds=len(seed_poses),
                 last_batch_coverage_gain=gain,
             )
-            if i > 0 and any_session_stop(self.session_policies, ctx):
-                stopped = True
+            fired = session_stop_reason(self.session_policies, ctx)
+            if fired is not None:
+                reason = fired
                 break
-            results.append(self.run_walk(seed, coverage, seed_id=f"seed{i}"))
 
         if self.event_sink is not None:
             total_steps = sum(len(r.steps) for r in results)
             self.event_sink(
                 SessionEndEvent(
-                    reason="session_policy" if stopped else "completed",
+                    reason=reason,
                     total_steps=total_steps,
                     total_poses=len(coverage),
                 )
@@ -299,6 +325,8 @@ class Explorer:
         degenerate: bool,
         coverage: CoverageState,
         trail: list[Pose],
+        *,
+        blocked: bool = False,
     ) -> None:
         if self.event_sink is None:
             return
@@ -319,19 +347,9 @@ class Explorer:
                 coverage_pose_space=cov_ps,
                 sampled_floor=coverage.floor_positions(),
                 trail_floor=_floor_array(trail, self.scene.up_axis),
+                blocked=blocked,
             )
         )
-
-    def _wall_distance(self, render: RenderResult | None) -> float | None:
-        """Median depth in the horizontal band ahead, or None if unavailable."""
-        if render is None or render.depth is None:
-            return None
-        h, w = render.depth.shape
-        band = render.depth[2 * h // 5 : 3 * h // 5, :]
-        finite = band[np.isfinite(band)]
-        if finite.size == 0:
-            return None
-        return float(np.median(finite))
 
     def _is_degenerate(self, pose: Pose, render: RenderResult) -> bool:
         out_of_bounds = bool(

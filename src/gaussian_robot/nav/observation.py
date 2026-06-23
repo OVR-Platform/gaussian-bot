@@ -24,6 +24,24 @@ def _gray_to_rgb(gray: np.ndarray) -> np.ndarray:
     return np.stack([gray, gray, gray], axis=-1)
 
 
+def wall_distance_from_depth(depth: np.ndarray | None) -> float | None:
+    """Median depth in the central horizontal band — the free distance ahead.
+
+    Operates on **metric** render depth (the renderer's z-buffer), never a
+    monocular estimate, so the result is in scene units and safe to use for
+    step-capping and the ``wall ahead`` state line. Returns ``None`` when no
+    finite depth is available.
+    """
+    if depth is None:
+        return None
+    h, _ = depth.shape
+    band = depth[2 * h // 5 : 3 * h // 5, :]
+    finite = band[np.isfinite(band)]
+    if finite.size == 0:
+        return None
+    return float(np.median(finite))
+
+
 def depth_to_uint8(depth: np.ndarray | None) -> np.ndarray:
     """Colormap a depth map to ``(H, W, 3)`` uint8 (near = bright).
 
@@ -88,9 +106,12 @@ class ObservationBuilder:
         "- [depth] distance map (bright = near/wall, dark = far/open)\n"
         "- [confidence] per-pixel RENDER ALPHA: bright = solid geometry, dark = gaps/holes/missing surfaces. "
         "Different from the map — this reflects per-pixel opacity, not training coverage.\n"
-        "- [map] top-down view rotating with you. Background colour = 3DGS TRAINING DENSITY: "
-        "red = sparse (few Gaussians, needs more views), green = dense (well-sampled). "
-        "Blue dots = visited, green line = trail, red arrow = you (up = forward).\n"
+        "- [map] LOCAL top-down view, centred on you and rotating with you (up = forward). "
+        "Background colour = 3DGS TRAINING DENSITY: red = sparse (few Gaussians, needs more "
+        "views), green = dense (well-sampled). Blue dots = visited, amber line = your trail, "
+        "red arrow = you. Faint grey rings mark distance (the label is the map's radius in "
+        "metres); the small 'N' tick is fixed world-north, so it swings when you turn but "
+        "holds still when you only move.\n"
         "\n"
         "NOTE: the [depth] panel may use relative (non-metric) scale if a monocular depth estimator "
         "is active. Use wall_distance in [state] for metric distance judgements.\n"
@@ -141,27 +162,25 @@ class ObservationBuilder:
         budget: int = 0,
         action_history: list[str] | None = None,
         coverage_pct: float = 0.0,
-        wall_distance: float | None = None,
         scene_description: str = "",
     ) -> tuple[Observation, RenderResult]:
         """Render the view and assemble the observation.
 
         Returns the :class:`Observation` **and** the underlying
         :class:`RenderResult` (the explorer needs the render to judge
-        degeneracy / record confidence).
+        degeneracy / record confidence). The returned result keeps the
+        renderer's **metric** depth even when a monocular estimator is active —
+        the estimate is used only for the human-facing depth *panel*, never for
+        geometry decisions (degeneracy, wall distance, step-capping).
         """
         result = self.renderer.render(camera)
+        display_depth = result.depth
         if self.depth_estimator is not None:
-            da3_depth = self.depth_estimator.estimate(result.rgb)
-            result = RenderResult(
-                rgb=result.rgb,
-                camera=result.camera,
-                depth=da3_depth,
-                alpha=result.alpha,
-            )
-        depth_panel = depth_to_uint8(result.depth)
+            display_depth = self.depth_estimator.estimate(result.rgb)
+        depth_panel = depth_to_uint8(display_depth)
         confidence_panel = self._confidence_panel(result.alpha)
         map_panel = self._body_frame_map(coverage, camera.pose, trail)
+        wall_distance = wall_distance_from_depth(result.depth)
         state_line = self._state_line(camera.pose, step, budget, coverage_pct, wall_distance)
 
         parts = [self.prompt]
@@ -279,12 +298,24 @@ class ObservationBuilder:
         cropped = rotated.crop((left, top, left + 2 * half_px, top + 2 * half_px))
         return cropped.resize((size, size), Image.Resampling.BILINEAR)
 
+    def _map_span(self, coverage: CoverageState) -> float:
+        """World units spanned across the map.
+
+        Uses the explicit ``map_span`` when set (an agent-centric local window);
+        otherwise falls back to the scene's **floor-plane** diagonal (the up axis
+        is excluded so a tall room doesn't shrink the footprint).
+        """
+        if self.map_span is not None:
+            return max(self.map_span, 1e-9)
+        extent = np.abs(coverage.bounds_max - coverage.bounds_min)
+        floor_extent = floor_xy(extent, self.up_axis)[0]
+        return max(float(np.linalg.norm(floor_extent)), 1e-9)
+
     def _body_frame_map(
         self, coverage: CoverageState, current: Pose, trail: list[Pose]
     ) -> np.ndarray:
         size = self.map_size
-        diag = float(np.linalg.norm(coverage.bounds_max - coverage.bounds_min))
-        span = self.map_span if self.map_span is not None else max(diag, 1e-9)
+        span = self._map_span(coverage)
         img = self._density_background(current, size, span)
         draw = ImageDraw.Draw(img)
         half_span = max(span / 2.0, 1e-9)
@@ -305,6 +336,9 @@ class ObservationBuilder:
             y = size / 2.0 - ahead * px_per_unit
             return (x, y)
 
+        cx = cy = size / 2.0
+        self._draw_scale_rings(draw, cx, cy, half_span, px_per_unit)
+
         sampled = coverage.floor_positions()
         r_dot = max(3, size // 128)
         for s in sampled:
@@ -314,9 +348,8 @@ class ObservationBuilder:
 
         if len(trail) >= 2:
             line = [to_pixel(floor_xy(p.position, self.up_axis)[0]) for p in trail]
-            draw.line(line, fill=(40, 170, 70), width=max(2, size // 256))
+            draw.line(line, fill=(245, 190, 40), width=max(3, size // 170))
 
-        cx = cy = size / 2.0
         arrow_len = size / 6.0
         draw.line(
             (cx, cy + arrow_len / 2, cx, cy - arrow_len / 2),
@@ -332,5 +365,45 @@ class ObservationBuilder:
             fill=(220, 30, 30),
         )
 
+        self._draw_north_tick(draw, cx, cy, fwd2, right2, size)
         draw.rectangle((0, 0, size - 1, size - 1), outline=(180, 180, 180))
         return np.asarray(img, dtype=np.uint8)
+
+    @staticmethod
+    def _draw_scale_rings(
+        draw: ImageDraw.ImageDraw, cx: float, cy: float, half_span: float, px_per_unit: float
+    ) -> None:
+        """Three faint concentric rings as a distance reference; label the outer radius."""
+        for frac in (1 / 3, 2 / 3, 1.0):
+            r = half_span * frac * px_per_unit
+            draw.ellipse((cx - r, cy - r, cx + r, cy + r), outline=(150, 150, 150))
+        label = f"{half_span:.1f}m" if half_span < 10 else f"{half_span:.0f}m"
+        draw.text((cx + 3, cy - half_span * px_per_unit + 2), label, fill=(170, 170, 170))
+
+    def _draw_north_tick(
+        self,
+        draw: ImageDraw.ImageDraw,
+        cx: float,
+        cy: float,
+        fwd2: np.ndarray,
+        right2: np.ndarray,
+        size: int,
+    ) -> None:
+        """A small fixed world-north marker on the body-frame map.
+
+        World-north is +(first floor axis). Projected into the agent frame it
+        swings as the agent turns (rotation cue) but holds when the agent only
+        translates (so turns and steps look different on the rotating map).
+        """
+        north2 = np.array([1.0, 0.0])  # +(first floor axis) in floor coords
+        ahead = float(north2 @ fwd2)
+        right = float(north2 @ right2)
+        radius = size * 0.44
+        nx = cx + right * radius
+        ny = cy - ahead * radius
+        draw.line(
+            (cx + right * radius * 0.88, cy - ahead * radius * 0.88, nx, ny),
+            fill=(120, 160, 230),
+            width=max(2, size // 200),
+        )
+        draw.text((nx - 3, ny - 6), "N", fill=(120, 160, 230))

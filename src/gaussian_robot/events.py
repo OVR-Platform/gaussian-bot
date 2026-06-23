@@ -26,6 +26,7 @@ class SessionStartEvent:
     bounds_max: np.ndarray
     up_axis: str
     total_seeds: int
+    seed_floor: np.ndarray  # (S, 2) floor positions of the seeds walks start from
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,16 @@ class StepEvent:
     coverage_pose_space: float
     sampled_floor: np.ndarray  # (N, 2)
     trail_floor: np.ndarray  # (M, 2)
+    blocked: bool = False  # a FORWARD step halted short of an obstacle (no move committed)
+
+
+@dataclass(frozen=True)
+class WalkEndEvent:
+    """Emitted when one walk ends, carrying *why* it stopped."""
+
+    seed_id: str
+    reason: str  # coverage_plateau | bounds | stuck | step_budget
+    steps: int
 
 
 @dataclass(frozen=True)
@@ -65,5 +76,5 @@ class SessionEndEvent:
     total_poses: int
 
 
-SessionEvent = SessionStartEvent | StepEvent | SceneDescribeEvent | SessionEndEvent
+SessionEvent = SessionStartEvent | StepEvent | WalkEndEvent | SceneDescribeEvent | SessionEndEvent
 EventSink = Callable[[SessionEvent], None]

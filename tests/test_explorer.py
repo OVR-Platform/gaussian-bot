@@ -9,6 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
+from gaussian_robot.events import SessionEndEvent, SessionStartEvent, WalkEndEvent
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import Action, ActionSpace
 from gaussian_robot.nav.explorer import Explorer
@@ -36,14 +37,15 @@ def _scene() -> SplatScene:
 
 
 class FakeRenderer:
-    def __init__(self) -> None:
+    def __init__(self, depth_value: float = 5.0) -> None:
         self.calls = 0
+        self.depth_value = depth_value
 
     def render(self, camera: Camera) -> RenderResult:
         self.calls += 1
         h, w = camera.intrinsics.height, camera.intrinsics.width
         rgb = np.zeros((h, w, 3), dtype=np.uint8)
-        depth = np.full((h, w), 5.0, dtype=np.float32)
+        depth = np.full((h, w), self.depth_value, dtype=np.float32)
         return RenderResult(rgb=rgb, camera=camera, depth=depth)
 
 
@@ -76,8 +78,9 @@ def _explorer(
     walk_policies: list[StopPolicy] | None = None,
     session_policies: list[SessionStopPolicy] | None = None,
     max_steps: int = 5,
+    depth_value: float = 5.0,
 ) -> Explorer:
-    renderer = FakeRenderer()
+    renderer = FakeRenderer(depth_value=depth_value)
     vlm = ScriptedVLM(actions)
     space = ActionSpace(step=1.0)
     builder = ObservationBuilder(renderer=renderer, up_axis="y", map_size=64)
@@ -170,6 +173,46 @@ def test_observation_map_is_not_blank_when_sampled() -> None:
     has_red = bool(np.any((map_img[..., 0] == 220) & (map_img[..., 2] == 30)))
     assert has_blue
     assert has_red
+
+
+def test_walk_records_stop_reason_step_budget() -> None:
+    explorer = _explorer([Action.FORWARD], max_steps=4)
+    result = explorer.run_walk(Pose(), _state(), seed_id="s0")
+    assert result.stop_reason == "step_budget"  # no policy fired; loop exhausted
+
+
+def test_walk_records_plateau_reason_and_emits_walk_end() -> None:
+    events: list[object] = []
+    plateau = CoveragePlateau(novelty_delta=0.5, window=2)
+    explorer = _explorer([Action.STOP], walk_policies=[plateau], max_steps=50)
+    explorer.event_sink = events.append
+    result = explorer.run_walk(Pose(), _state(), seed_id="s0")
+    assert result.stop_reason == "coverage_plateau"
+    walk_ends = [e for e in events if isinstance(e, WalkEndEvent)]
+    assert len(walk_ends) == 1
+    assert walk_ends[0].reason == "coverage_plateau"
+    assert walk_ends[0].seed_id == "s0"
+
+
+def test_blocked_forward_does_not_accumulate_coverage() -> None:
+    # depth 0.3 < margin (0.5 * step 1.0) -> every forward is blocked, nothing commits.
+    explorer = _explorer([Action.FORWARD], max_steps=5, depth_value=0.3)
+    state = _state()
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), state, seed_id="s0")
+    assert len(state) == 1  # only the seed pose; no forward step committed
+    assert all(s.blocked for s in result.steps if s.action is Action.FORWARD)
+
+
+def test_session_end_reason_is_specific() -> None:
+    events: list[object] = []
+    explorer = _explorer([Action.FORWARD], session_policies=[SeedExhaustion()], max_steps=2)
+    explorer.event_sink = events.append
+    seeds = [Pose(position=np.array([1.0, 0.0, 1.0])), Pose(position=np.array([8.0, 0.0, 8.0]))]
+    explorer.run_session(seeds, _state())
+    end = next(e for e in events if isinstance(e, SessionEndEvent))
+    assert end.reason == "seeds_exhausted"
+    start = next(e for e in events if isinstance(e, SessionStartEvent))
+    assert start.seed_floor.shape == (2, 2)  # both seeds' floor positions surfaced
 
 
 def test_render_is_runtime_checkable() -> None:
