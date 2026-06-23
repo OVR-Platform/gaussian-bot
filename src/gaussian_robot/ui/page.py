@@ -29,7 +29,8 @@ PAGE_HTML = """<!doctype html>
                background: rgba(0,0,0,.3); padding: 8px; border-radius: 6px; }
   pre#vllm-log { white-space: pre-wrap; max-height: 160px; overflow: auto; font-size: 11px;
                  background: rgba(0,0,0,.3); padding: 8px; border-radius: 6px; }
-  canvas#world-map { width: 100%; aspect-ratio: 1/1; border-radius: 6px; background: #111; }
+  canvas#world-map { width: 100%; max-width: 460px; aspect-ratio: 1/1; border-radius: 6px;
+                     background: #111; display: block; }
   @media (max-width: 900px) {
     body { grid-template-columns: 1fr; }
     .views { grid-template-columns: 1fr; }
@@ -104,7 +105,7 @@ PAGE_HTML = """<!doctype html>
     <figure><figcaption>map (body-fixed)</figcaption><img id="body-map" class="panel"/></figure>
   </div>
   <h2>Global coverage (world frame)</h2>
-  <canvas id="world-map" width="400" height="400"></canvas>
+  <canvas id="world-map" width="600" height="600"></canvas>
   <h2>Scene description</h2>
   <pre id="scene-desc" style="white-space:pre-wrap;max-height:140px;overflow:auto;font-size:12px;
        background:rgba(80,140,80,.12);padding:8px;border-radius:6px;">—</pre>
@@ -118,7 +119,8 @@ PAGE_HTML = """<!doctype html>
 <script>
 let BOUNDS = null, UP = "y";
 const num = (v, d) => (v === "" || v === null || v === undefined ? d : Number(v));
-function floorAxes(up){ const all=[0,1,2]; const u={x:0,y:1,z:2}[up]; return all.filter(i=>i!==u); }
+function floorAxes(up){ const u={x:0,y:1,z:2}[(up||"y").replace("-","")]; return [0,1,2].filter(i=>i!==u); }
+const AXIS_NAME = i => ["X","Y","Z"][i];
 
 async function loadConfig(){
   const c = await fetch("/api/config").then(r=>r.json());
@@ -193,6 +195,7 @@ function setStatus(t){ document.getElementById("status").textContent = t; }
 function setChips(o){ document.getElementById("chips").innerHTML =
   Object.entries(o).map(([k,v])=>`<span class="chip"><b>${k}</b> ${v}</span>`).join(""); }
 
+let SEEDS = [];
 function drawWorld(ctx, sampled, trail, pose){
   if(!BOUNDS) return;
   const [a,b] = floorAxes(UP);
@@ -205,11 +208,28 @@ function drawWorld(ctx, sampled, trail, pose){
   ctx.strokeRect(tx(lo[0]),ty(hi[1]),tx(hi[0])-tx(lo[0]),ty(lo[1])-ty(hi[1]));
   ctx.fillStyle="#285ad0";
   (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[0]),ty(p[1]),2,0,7); ctx.fill(); });
+  // seeds: where walks start from (hollow amber rings, drawn under the trail/pose)
+  ctx.strokeStyle="#f5be28"; ctx.lineWidth=2;
+  (SEEDS||[]).forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]);
+    ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.stroke();
+    ctx.fillStyle="#f5be28"; ctx.font="9px sans-serif"; ctx.fillText(i, x+7, y+3); });
   if(trail && trail.length>1){
     ctx.strokeStyle="#2aa846"; ctx.lineWidth=2; ctx.beginPath();
     trail.forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
   }
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
+  // legend
+  ctx.font="11px sans-serif"; ctx.textBaseline="middle";
+  const items=[["#285ad0","visited"],["#f5be28","seed (walk start)"],["#2aa846","current trail"],["#d6201e","robot"]];
+  items.forEach(([c,t],i)=>{ const y=14+i*16; ctx.fillStyle=c;
+    ctx.beginPath(); ctx.arc(14,y,4,0,7); ctx.fill(); ctx.fillStyle="#bbb"; ctx.fillText(t,24,y); });
+  // world axis labels: horizontal = +floor axis a, vertical = +floor axis b (up axis is out of plane)
+  ctx.fillStyle="#9aa"; ctx.font="12px sans-serif";
+  ctx.fillText("+"+AXIS_NAME(a)+" \\u2192", W-58, H-12);
+  ctx.fillText("up: "+UP, W-58, 16);
+  ctx.save(); ctx.translate(14, H-14); ctx.rotate(-Math.PI/2);
+  ctx.fillText("+"+AXIS_NAME(b)+" \\u2192", 0, 0); ctx.restore();
+  ctx.textBaseline="alphabetic";
 }
 
 let animTimer=null;
@@ -263,9 +283,15 @@ async function run(endpoint){
   stream.onmessage = (e)=>{
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
+      SEEDS = m.seeds || [];
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
+      drawWorld(document.getElementById("world-map").getContext("2d"), [], [], null);
       setChips({status:"running", vlm:vlmMode, seeds:m.total_seeds, up:UP}); return; }
+    if(m.type==="walk_end"){
+      const log = document.getElementById("action-log");
+      log.textContent += `── ${m.seed_id} ended: ${m.reason} (${m.steps} steps) ──\n`;
+      log.scrollTop = log.scrollHeight; return; }
     if(m.type==="scene_describe"){
       document.getElementById("scene-desc").textContent = m.description || "—";
       const log = document.getElementById("action-log");
@@ -286,10 +312,11 @@ async function run(endpoint){
       document.getElementById("reason").textContent = m.raw_text || m.action;
       const log = document.getElementById("action-log");
       const pos = m.pose.map(v=>v.toFixed(1)).join(",");
-      log.textContent += `[${m.seed_id} #${m.step}] ${m.action} → (${pos})  nov=${m.novelty.toFixed(2)}\n`;
+      const flag = m.blocked ? " [blocked: wall ahead]" : (m.degenerate ? " [degenerate]" : "");
+      log.textContent += `[${m.seed_id} #${m.step}] ${m.action} → (${pos})  nov=${m.novelty.toFixed(2)}${flag}\n`;
       log.scrollTop = log.scrollHeight;
       setChips({seed:m.seed_id, step:`${m.step}/${m.budget}`, action:m.action,
-        novelty:m.novelty.toFixed(2), degenerate:m.degenerate?"!":"",
+        novelty:m.novelty.toFixed(2), blocked:m.blocked?"!":"", degenerate:m.degenerate?"!":"",
         "cov(floor)":(100*m.coverage_floor).toFixed(1)+"%",
         "cov(pose)":(100*m.coverage_pose_space).toFixed(1)+"%"});
       drawWorld(document.getElementById("world-map").getContext("2d"), m.sampled, m.trail, m.pose);
