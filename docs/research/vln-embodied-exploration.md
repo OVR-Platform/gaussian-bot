@@ -16,7 +16,7 @@
 
 ## TL;DR — le 3 leve principali
 
-1. **NBV guidato dall'incertezza di ricostruzione, calcolato sullo splat stesso**
+1. **NBV (Next Best View) guidato dall'incertezza di ricostruzione, calcolato sullo splat stesso**
    (FisherRF, GauSS-MI). È la cosa più *on-target* in assoluto: il nostro obiettivo
    *è* next-best-view per ricostruzione. Sostituisce le euristiche novelty/coverage
    con un segnale principiato, real-time, **training-free**.
@@ -48,8 +48,11 @@ che hai la mappa di incertezza e il grafo.
 ### 1.1 VLN classico (instruction-following)
 Il VLN è il paradigma per agenti che **comunicano in linguaggio naturale, percepiscono
 l'ambiente ed eseguono task** ([VLN survey, ACL 2022][vln-survey]). Benchmark: R2R/RxR
-(segui un'istruzione passo-passo lungo un grafo di viewpoint), REVERIE (istruzioni
-"remote-object", goal di alto livello).
+(segui un'istruzione passo-passo lungo un grafo di viewpoint — **RxR**, *Room-across-Room*,
+è la versione multilingue con percorsi più lunghi e allineamento fine-grained parola↔posa),
+**REVERIE** (*Remote Embodied Referring Expression*: invece di istruzioni passo-passo dai
+un goal di alto livello — es. "porta il cuscino dal divano in soggiorno" — e l'agente deve
+navigare autonomamente fino a un oggetto target non visibile dalla posizione di partenza).
 **Posizionamento**: il nostro task *non* è questo — facciamo coverage autonoma, non
 seguiamo istruzioni. Ma le *tecniche* (memoria, grounding visione-linguaggio, waypoint
 prediction) sono riusabili, ed è la base per l'instruction-following futuro (§3).
@@ -57,10 +60,24 @@ prediction) sono riusabili, ed è la base per l'instruction-following futuro (§
 ### 1.2 Embodied exploration: da frontier a semantic
 - **Frontier-Based Exploration**: vai verso il confine tra noto e ignoto. Geometrico,
   classico, robusto.
+  > **Cos'è un *frontier*?** Sulla mappa che l'agente costruisce, ogni cella è *libera
+  > osservata*, *occupata*, oppure *sconosciuta*. Un **frontier** è una cella libera che
+  > confina con almeno una cella sconosciuta — letteralmente "il bordo del noto che si
+  > affaccia sull'ignoto". Andarci *garantisce* di scoprire qualcosa di nuovo, perché
+  > spinge il confine verso l'inesplorato. Le varianti cambiano *come si sceglie* quale
+  > frontier visitare: geometrico (il più vicino / quello che apre più area) vs. semantico
+  > (per significato della zona). **Per noi (coverage 3DGS)** il "noto/ignoto" diventa
+  > *"zona già ben ricostruita dallo splat / zona ancora incerta o poco coperta"*: il
+  > frontier più promettente è quello che confina con la maggiore **incertezza di
+  > ricostruzione** (→ si sposa con la mappa FisherRF/GauSS-MI di P0).
 - **Semantic exploration**: inietta priori semantici nella scelta del frontier.
-  **SemExp** (RL appreso). **PONI** ([CVPR 2022][poni]) disaccoppia *"where to look?"*
-  (rete appresa di potenziali) da *"how to navigate?"* (Fast Marching analitico) — solo
-  il "where" è appreso.
+  **SemExp** (*Semantic Exploration*: la policy che sceglie dove andare è **appresa con
+  RL** — *Reinforcement Learning*, una rete addestrata per tentativi/ricompensa).
+  **PONI** ([CVPR 2022][poni]) disaccoppia *"where to look?"* (dove guardare — una rete
+  appresa di **funzioni di potenziale**, una mappa che assegna a ogni frontier un valore
+  di "quanto promette") da *"how to navigate?"* (come arrivarci — **Fast Marching**, un
+  metodo *analitico/non appreso* che calcola il cammino più breve sulla mappa) — così
+  **solo il "where" è appreso**, il "how" è geometria classica.
 - **StructNav** ([RSS 2023][structnav]): pipeline **completamente modulare e
   training-free** che inietta semantica (da BERT/CLIP pre-addestrati, zero-shot) nel
   frontier-based per scegliere il frontier più promettente. **Senza training sulle scene
@@ -68,23 +85,45 @@ prediction) sono riusabili, ed è la base per l'instruction-following futuro (§
   training-free può superare l'RL appreso.
 
 ### 1.3 Active vision / Next-Best-View per ricostruzione — *la categoria più vicina a noi*
-La [review NBV 2025][nbv-review] tassonomizza in 5 famiglie: **rule-based,
+La [review NBV 2025][nbv-review] classifica i metodi in 5 famiglie: **rule-based,
 uncertainty-based, sampling-based, learning-based, prediction-based**. Per il nostro
 vincolo (single-GPU, no-training) le famiglie giuste sono **uncertainty-based** e
 **rule/sampling-based**; l'RL-NBV (learning-based) è il trade-off "training pesante" da
 evitare.
+
+> **Le 5 famiglie in breve.** *Rule-based*: euristiche fisse decise a priori (pattern
+> geometrici, "gira di N°"), nessun apprendimento. *Uncertainty-based*: vai dove il
+> modello è più incerto ← **la nostra** (FisherRF/GauSS-MI). *Sampling-based*: campiona
+> molte pose candidate, valutale, scegli la migliore. *Learning-based*: una policy
+> appresa (RL o supervised) decide la prossima vista — training pesante. *Prediction-based*:
+> predice com'è la parte non ancora vista (completamento di scena) e pianifica su quella.
 
 Metodi definiti **direttamente sul radiance field / splat** (perfetti per noi):
 - **FisherRF** ([ECCV 2024][fisherrf]): usa la **Fisher Information** per quantificare
   l'informazione osservata in un radiance field **senza ground-truth**. Model-agnostic
   (NeRF *e* 3DGS), dà incertezza pixel-wise, e seleziona la NBV a **70 fps su backend
   3DGS** (Hessiana diagonale in CUDA, ~11 ms), **nessuna policy addestrata**.
+  > *In parole povere*: la Fisher Information misura **quanto una nuova foto cambierebbe
+  > il modello**. Se da un certo punto di vista lo splat è già "sicuro", quella vista
+  > insegna poco; se invece guardandolo da lì il modello dovrebbe correggersi molto, vuol
+  > dire che lì non sa → è la vista da prendere. È come scegliere *la domanda che ti
+  > insegna di più su ciò che ancora non sai*, senza bisogno della risposta giusta
+  > (ground-truth) per saperlo in anticipo.
 - **GauSS-MI** ([RSS 2025][gaussmi]): **Shannon Mutual Information** come criterio NBV
   real-time definito sul modello 3DGS, con un modello di incertezza probabilistico
   **per-Gaussiana** (incertezza tracciata a livello di primitiva, non con una rete
   esterna).
+  > *In parole povere*: ogni singola Gaussiana porta con sé un suo "quanto sono sicura di
+  > esistere/del mio colore". La Mutual Information stima **quanta di questa incertezza una
+  > vista candidata andrebbe a togliere**, e si sceglie la vista che ne toglie di più.
+  > Differenza con FisherRF: qui l'incertezza è cucita *dentro le primitive stesse* (ogni
+  > blob se la porta dietro), non calcolata come sensibilità globale del rendering.
 - **ActiveSplat** ([fonte][activesplat]): active mapping costruito *su* Gaussian
   Splatting — riferimento architetturale diretto per esplorazione attiva su splat.
+  > *In parole povere*: non è un singolo criterio ma **il sistema completo** che esplora e
+  > ricostruisce *insieme*, chiudendo il ciclo "decidi dove andare → muoviti → cattura →
+  > aggiorna lo splat → ridecidi". È il riferimento di **come incastrare** un criterio NBV
+  > (es. i due sopra) dentro un loop di esplorazione su splat — il "telaio", non il motore.
 
 ### 1.4 Navigazione zero-shot con LLM/VLM (training-free)
 - **MapGPT** ([ACL 2024][mapgpt]): agente VLN **zero-shot** con LLM general-purpose,
