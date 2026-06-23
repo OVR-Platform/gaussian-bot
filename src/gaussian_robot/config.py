@@ -62,15 +62,29 @@ class RunConfig(BaseModel):
     bounds_max: tuple[float, float, float] = Field(default=(10.0, 10.0, 10.0))
 
     action_step_fraction: float = Field(
-        default=0.03, description="Step as a fraction of AABB diagonal."
+        default=0.015,
+        description="Step as a fraction of AABB diagonal. Smaller = finer, more deliberate motion.",
     )
     coverage_radius: float | None = Field(
         default=None, description="Coverage radius; None -> derived from the step length."
     )
-    max_steps: int = Field(default=40, ge=1)
-    pose_budget: int = Field(default=200, ge=1)
-    num_seeds: int = Field(default=5, ge=1)
+    max_steps: int = Field(
+        default=120, ge=1, description="Max steps per walk. Higher = longer, deeper walks."
+    )
+    pose_budget: int = Field(default=400, ge=1)
+    num_seeds: int = Field(
+        default=3,
+        ge=1,
+        description="Number of walk seeds. Fewer = budget spent exploring deeply, not restarting.",
+    )
     map_size: int = Field(default=512, ge=64)
+    map_span: float | None = Field(
+        default=None,
+        description=(
+            "World units across the body-fixed map. None -> a local window of "
+            "~10 steps, so each step is clearly visible (instead of the whole scene)."
+        ),
+    )
     task_prompt: str = Field(
         default="", description="Optional task for the robot, e.g. 'find the office door'."
     )

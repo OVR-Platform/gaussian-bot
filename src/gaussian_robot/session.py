@@ -404,7 +404,9 @@ def generate_seeds(
     # same elevation as a known-good camera position rather than mid-bounding-box.
     good_height = float(safe_origin[up_idx])
 
-    n_candidates = max(config.num_seeds * 3, 12)
+    # Over-sample candidates: after the sharpness floor drops the blurriest ~half,
+    # enough well-spread real views remain to pick num_seeds sharp ones from.
+    n_candidates = max(config.num_seeds * 6, 24)
 
     if capture_poses:
         candidates: list[Pose] = _spread_capture_poses(capture_poses, ua, n_candidates)
@@ -427,9 +429,7 @@ def generate_seeds(
     if renderer is not None:
         frontier = _positions_from_density(renderer, ua, n_candidates)
     if frontier is None:
-        frontier = _floor_seed_positions(
-            bmin, bmax, ua, n_candidates, height=good_height
-        )
+        frontier = _floor_seed_positions(bmin, bmax, ua, n_candidates, height=good_height)
 
     # Stamp the validated height onto density-sampled positions (they have height=0).
     for pos in frontier:
@@ -457,6 +457,19 @@ def generate_seeds(
     return candidates
 
 
+def _sharpness(rgb: np.ndarray) -> float:
+    """High-frequency content of a render (mean squared image gradient).
+
+    Crisp, well-reconstructed views score high; blurry/smeared regions where the
+    splat lacks training views score low. Cheap, dependency-free, and scale-free
+    enough to compare candidate seed views of the same scene.
+    """
+    g = rgb.astype(np.float64).mean(axis=2)
+    gx = np.diff(g, axis=1)
+    gy = np.diff(g, axis=0)
+    return float((gx * gx).mean() + (gy * gy).mean())
+
+
 def _select_seeds(
     renderer: Renderer,
     candidates: list[Pose],
@@ -472,43 +485,50 @@ def _select_seeds(
     re-ranked by render quality (median depth x alpha) so the best guesses are
     tried first, and an extra median-depth floor rejects views buried in geometry.
 
-    When not ``strict`` (capture-pose seeds), the incoming order is preserved:
-    the candidates are already real, known-good viewpoints spread across the floor
-    by farthest-point selection, so re-ranking by depth would only collapse that
-    spatial diversity toward whichever view happens to see furthest.
+    When not ``strict`` (capture-pose seeds), the incoming farthest-point order is
+    preserved for spatial diversity, but views whose sharpness is below the median
+    of the candidate pool are skipped — so a real but blurry/under-reconstructed
+    capture view doesn't become a seed while sharper, equally-spread ones exist.
     """
     from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
     intrinsics = _PREVIEW_INTRINSICS
 
-    def _score(pose: Pose) -> float:
-        r = renderer.render(Camera(pose=pose, intrinsics=intrinsics))
+    # Render every candidate once and cache its metrics (avoids double-rendering).
+    scored: list[tuple[Pose, float, float, float, float]] = []
+    for s in candidates:
+        r = renderer.render(Camera(pose=s, intrinsics=intrinsics))
         if r.depth is None:
-            return -1.0
-        finite = r.depth[np.isfinite(r.depth)]
-        med = float(np.median(finite)) if finite.size > 0 else 0.0
-        alpha = float(r.alpha.mean()) if r.alpha is not None else 0.5
-        return med * alpha
+            scored.append((s, 0.0, 0.0, 0.0, 0.0))
+            continue
+        finite_mask = np.isfinite(r.depth)
+        finite_frac = float(finite_mask.mean())
+        near = r.depth[finite_mask]
+        median_depth = float(np.median(near)) if near.size > 0 else 0.0
+        alpha_mean = float(r.alpha.mean()) if r.alpha is not None else 1.0
+        sharp = _sharpness(r.rgb)
+        scored.append((s, finite_frac, median_depth, alpha_mean, sharp))
 
-    ordered = sorted(candidates, key=_score, reverse=True) if strict else candidates
+    if strict:
+        ordered = sorted(scored, key=lambda it: it[2] * it[3], reverse=True)
+        sharp_floor = 0.0
+    else:
+        ordered = scored  # preserve farthest-point spread
+        valid_sharps = [sh for (_, ff, _, a, sh) in scored if ff >= 0.5 and a >= 0.15]
+        sharp_floor = float(np.median(valid_sharps)) if valid_sharps else 0.0
 
     seeds: list[Pose] = []
-    for s in ordered:
+    for s, finite_frac, median_depth, alpha_mean, sharp in ordered:
         if len(seeds) >= num_seeds:
             break
-        result = renderer.render(Camera(pose=s, intrinsics=intrinsics))
-        if result.depth is None:
-            continue
-        finite_frac = float(np.isfinite(result.depth).mean())
-        near = result.depth[np.isfinite(result.depth)]
-        median_depth = float(np.median(near)) if near.size > 0 else 0.0
-        alpha_mean = float(result.alpha.mean()) if result.alpha is not None else 1.0
         if finite_frac < 0.5 or alpha_mean < 0.15:
             continue
         if strict and median_depth < step:
             continue
+        if not strict and sharp < sharp_floor:
+            continue  # skip the blurriest real views; a sharper spread one remains
         seeds.append(s)
-    return seeds or [ordered[0]]
+    return seeds or [ordered[0][0]]
 
 
 def build_vlm(config: RunConfig) -> VLMClient:
@@ -568,16 +588,22 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
             device=config.cuda_device,
         )
 
+    # Default the map to a local window (~10 steps across) so motion is visible;
+    # the whole-scene view made every step an invisible sub-pixel nudge.
+    map_span = config.map_span if config.map_span is not None else space.step * 10.0
     builder = ObservationBuilder(
         renderer=renderer,
         up_axis=up_axis,
         map_size=config.map_size,
+        map_span=map_span,
         task=config.task_prompt,
         depth_estimator=depth_estimator,
     )
 
     walk_policies: list[StopPolicy] = [
-        CoveragePlateau(novelty_delta=space.step, window=5),
+        # window=8: tolerate a longer unproductive stretch before ending a walk,
+        # so deliberate fine-grained exploration isn't cut short prematurely.
+        CoveragePlateau(novelty_delta=space.step, window=8),
         BoundsGuard(),
         StuckGuard(step=space.step),
     ]
@@ -602,7 +628,12 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
 
     seed_pool = capture_poses if config.use_capture_pose_seeds else []
     candidates = generate_seeds(
-        config, bmin, bmax, origin=seed_origin, renderer=renderer, capture_poses=seed_pool,
+        config,
+        bmin,
+        bmax,
+        origin=seed_origin,
+        renderer=renderer,
+        capture_poses=seed_pool,
         up_axis=up_axis,
     )
     # Capture poses are known-good viewpoints, so validation can be lenient (see
