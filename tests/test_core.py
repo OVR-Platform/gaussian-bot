@@ -8,7 +8,8 @@ import numpy as np
 import pytest
 
 from gaussian_robot.render.base import Renderer, RenderResult
-from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose, up_vector
+from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose, axis_index, up_vector
+from gaussian_robot.session import look_at
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
 from gaussian_robot.vlm.client import VLMClient
 
@@ -34,6 +35,22 @@ def test_up_vector_validation() -> None:
     assert np.allclose(up_vector("y"), [0, 1, 0])
     with pytest.raises(ValueError):
         up_vector("w")
+
+
+def test_up_vector_signed_axes() -> None:
+    assert np.allclose(up_vector("-y"), [0, -1, 0])
+    assert np.allclose(up_vector("+z"), [0, 0, 1])
+    assert np.allclose(up_vector("-x"), [-1, 0, 0])
+    # Floor-plane axis index ignores sign: -y and y share the XZ floor plane.
+    assert axis_index("-y") == axis_index("y") == 1
+
+
+def test_look_at_respects_up_sign() -> None:
+    # With -y up, the camera's "down" row (OpenCV +Y) must point toward +Y world.
+    rot = look_at(np.zeros(3), np.array([0.0, 0.0, 1.0]), "-y")
+    np.testing.assert_allclose(rot[1, :], [0, 1, 0], atol=1e-9)
+    rot_plus = look_at(np.zeros(3), np.array([0.0, 0.0, 1.0]), "y")
+    np.testing.assert_allclose(rot_plus[1, :], [0, -1, 0], atol=1e-9)
 
 
 def test_forward_is_third_row_unit() -> None:

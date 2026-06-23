@@ -20,6 +20,19 @@ class RunConfig(BaseModel):
     """All inputs needed to build and run an exploration session."""
 
     ply_path: str | None = Field(default=None, description="Path to the .ply/.splat scene.")
+    poses_path: str | None = Field(
+        default=None,
+        description=(
+            "Path to the capture poses the splat was reconstructed from "
+            "(3DGS cameras.json, COLMAP images.bin/.txt, or a directory). "
+            "Seeds start from these known-good viewpoints. If unset, auto-discovered "
+            "next to ply_path."
+        ),
+    )
+    use_capture_pose_seeds: bool = Field(
+        default=True,
+        description="Seed walks from capture camera poses when available (falls back to density).",
+    )
     vlm_base_url: str = Field(
         default="http://localhost:8000/v1", description="OpenAI-compatible vLLM endpoint."
     )
@@ -38,7 +51,13 @@ class RunConfig(BaseModel):
         default="cuda:0", description="CUDA device for the splat renderer, e.g. cuda:0, cuda:1."
     )
 
-    up_axis: str = Field(default="y")
+    up_axis: str = Field(
+        default="auto",
+        description=(
+            "World up axis: 'auto' detects it from the capture poses, or set it "
+            "explicitly (x/y/z, optionally signed e.g. -y)."
+        ),
+    )
     bounds_min: tuple[float, float, float] = Field(default=(0.0, 0.0, 0.0))
     bounds_max: tuple[float, float, float] = Field(default=(10.0, 10.0, 10.0))
 
@@ -83,9 +102,13 @@ class RunConfig(BaseModel):
     @field_validator("up_axis")
     @classmethod
     def _check_axis(cls, v: str) -> str:
-        if v.lower() not in {"x", "y", "z"}:
-            raise ValueError("up_axis must be one of x/y/z")
-        return v.lower()
+        from gaussian_robot.render.camera import parse_up_axis  # noqa: PLC0415
+
+        s = v.strip().lower()
+        if s == "auto":
+            return s  # resolved from the capture poses at session-build time
+        parse_up_axis(s)  # raises ValueError for anything but (optionally signed) x/y/z
+        return s
 
     def overrides(self, data: dict[str, Any]) -> RunConfig:
         """Return a copy with non-None fields from ``data`` applied."""

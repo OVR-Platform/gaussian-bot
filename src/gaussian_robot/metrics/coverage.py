@@ -20,17 +20,14 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from gaussian_robot.render.camera import Pose
+from gaussian_robot.render.camera import Pose, axis_index
 
-_UP_AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
-_FLOOR_AXES = {"x": (1, 2), "y": (0, 2), "z": (0, 1)}
+_FLOOR_PLANE = {0: (1, 2), 1: (0, 2), 2: (0, 1)}
 
 
 def _floor_axes_for(up_axis: str) -> tuple[int, int]:
-    try:
-        return _FLOOR_AXES[up_axis.lower()]
-    except KeyError:
-        raise ValueError(f"up_axis must be one of x/y/z, got {up_axis!r}") from None
+    # Floor plane depends only on which axis is up, not its sign.
+    return _FLOOR_PLANE[axis_index(up_axis)]
 
 
 def floor_xy(position: np.ndarray, up_axis: str) -> np.ndarray:

@@ -8,6 +8,7 @@ lands), builds the :class:`Explorer`, and spreads seed poses inside the scene.
 from __future__ import annotations
 
 import math
+import struct
 from pathlib import Path
 
 import numpy as np
@@ -30,12 +31,17 @@ from gaussian_robot.nav.stop import (
     StuckGuard,
 )
 from gaussian_robot.render.base import Renderer, RenderResult
-from gaussian_robot.render.camera import CameraIntrinsics, Pose
+from gaussian_robot.render.camera import CameraIntrinsics, Pose, axis_index, up_vector
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
 from gaussian_robot.vlm.client import VLMClient
 
-_UP_INDEX = {"x": 0, "y": 1, "z": 2}
-_FLOOR_AXES = {"x": (1, 2), "y": (0, 2), "z": (0, 1)}
+_FLOOR_PLANE = {0: (1, 2), 1: (0, 2), 2: (0, 1)}
+
+
+def _floor_axes(up_axis: str) -> tuple[int, int]:
+    """The two world axes spanning the floor plane (orthogonal to up)."""
+    return _FLOOR_PLANE[axis_index(up_axis)]
+
 
 # Intrinsics shared by every single-frame preview/animation render.
 _PREVIEW_INTRINSICS = CameraIntrinsics(fx=400, fy=400, cx=256, cy=256, width=512, height=512)
@@ -81,7 +87,7 @@ def _best_origin(
         return np.asarray((bmin + bmax) / 2.0)
 
     x, z, lo, hi = fc
-    up_idx = _UP_INDEX[up_axis]
+    up_idx = axis_index(up_axis)
     cloud = renderer.cloud  # type: ignore[attr-defined]
     means = cloud.means
     gs = cloud.density_grid.shape[0]
@@ -148,6 +154,37 @@ def _load_renderer(
     return r, bounds.min, bounds.max
 
 
+def _load_capture_poses(config: RunConfig) -> list[Pose]:
+    """Load the splat's capture poses from config or by discovery (empty on failure).
+
+    Independent of ``use_capture_pose_seeds``: the poses are also used to auto-detect
+    the up axis, which we want even when capture-pose *seeding* is disabled.
+    """
+    from gaussian_robot.splat.capture_poses import (  # noqa: PLC0415
+        discover_capture_poses,
+        load_capture_poses,
+    )
+
+    source: str | Path | None = config.poses_path
+    if source is None and config.ply_path:
+        source = discover_capture_poses(config.ply_path)
+    if source is None:
+        return []
+    try:
+        return load_capture_poses(source)
+    except (OSError, ValueError, KeyError, struct.error):
+        return []
+
+
+def _resolve_up_axis(config: RunConfig, capture_poses: list[Pose]) -> str:
+    """Resolve ``config.up_axis``, auto-detecting from capture poses when set to 'auto'."""
+    if config.up_axis != "auto":
+        return config.up_axis
+    from gaussian_robot.splat.capture_poses import infer_up_axis  # noqa: PLC0415
+
+    return infer_up_axis(capture_poses) or "y"
+
+
 def load_preview(config: RunConfig) -> dict[str, object]:
     """Load the scene and render a single preview frame.
 
@@ -162,8 +199,9 @@ def load_preview(config: RunConfig) -> dict[str, object]:
 
     from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
-    cam_pos = _best_origin(renderer, config.up_axis, bmin, bmax).copy()
-    rot = look_at(cam_pos, cam_pos, config.up_axis)
+    up_axis = _resolve_up_axis(config, _load_capture_poses(config))
+    cam_pos = _best_origin(renderer, up_axis, bmin, bmax).copy()
+    rot = look_at(cam_pos, cam_pos, up_axis)
     pose = Pose(position=cam_pos, rotation=rot)
     camera = Camera(pose=pose, intrinsics=_PREVIEW_INTRINSICS)
 
@@ -208,13 +246,14 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
     space = ActionSpace(step=config.action_step_fraction * diag)
     intrinsics = _PREVIEW_INTRINSICS
 
-    origin = _best_origin(renderer, config.up_axis, bmin, bmax)
+    up_axis = _resolve_up_axis(config, _load_capture_poses(config))
+    origin = _best_origin(renderer, up_axis, bmin, bmax)
 
-    pose = Pose(position=origin.copy(), rotation=look_at(origin, origin, config.up_axis))
+    pose = Pose(position=origin.copy(), rotation=look_at(origin, origin, up_axis))
     frames: list[str] = []
 
     for _step_i in range(n_steps):
-        next_pose = apply_action(pose, Action.FORWARD, space, config.up_axis)
+        next_pose = apply_action(pose, Action.FORWARD, space, up_axis)
         for f in range(n_frames):
             t = f / max(n_frames - 1, 1)
             pos = pose.position * (1 - t) + next_pose.position * t
@@ -228,14 +267,13 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
 
 def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
     """World->camera rotation (OpenCV) whose camera sits at ``origin`` looking at ``target``."""
-    up = np.zeros(3)
-    up[_UP_INDEX[up_axis]] = 1.0
+    up = up_vector(up_axis)
     forward = np.asarray(target, dtype=np.float64) - np.asarray(origin, dtype=np.float64)
     forward -= up * float(forward @ up)
     fn = float(np.linalg.norm(forward))
     if fn < 1e-9:
         forward = np.zeros(3)
-        forward[_FLOOR_AXES[up_axis][1]] = 1.0
+        forward[_floor_axes(up_axis)[1]] = 1.0
     else:
         forward = forward / fn
     right = np.cross(up, forward)
@@ -252,8 +290,8 @@ def _floor_seed_positions(
     height: float = 0.0,
 ) -> list[np.ndarray]:
     """Spread ``n`` seed positions on a grid across the floor AABB at ``height``."""
-    a, b = _FLOOR_AXES[up_axis]
-    up_idx = _UP_INDEX[up_axis]
+    a, b = _floor_axes(up_axis)
+    up_idx = axis_index(up_axis)
     side = max(1, math.isqrt(n))
     xs = np.linspace(bmin[a], bmax[a], side + 2)[1:-1]
     ys = np.linspace(bmin[b], bmax[b], side + 2)[1:-1]
@@ -295,7 +333,7 @@ def _positions_from_density(
         return None
     probs = flat / flat_sum
 
-    a, b = _FLOOR_AXES[up_axis]
+    a, b = _floor_axes(up_axis)
 
     rng = np.random.default_rng(seed=42)
     indices = rng.choice(len(probs), size=n, replace=True, p=probs)
@@ -312,23 +350,53 @@ def _positions_from_density(
     return positions
 
 
+def _spread_capture_poses(poses: list[Pose], up_axis: str, n: int) -> list[Pose]:
+    """Pick up to ``n`` capture poses spread across the floor via farthest-point.
+
+    Capture poses cluster (rig bursts, slow walks), so a naive prefix would seed
+    many near-identical viewpoints. Farthest-point selection on floor-plane
+    position keeps the chosen seeds spatially diverse while every one remains a
+    real, known-good viewpoint.
+    """
+    from gaussian_robot.filters.pose_filters import farthest_point_select  # noqa: PLC0415
+    from gaussian_robot.metrics.coverage import floor_xy  # noqa: PLC0415
+
+    if not poses:
+        return []
+    points = np.array([floor_xy(p.position, up_axis)[0] for p in poses], dtype=np.float64)
+    # r_keep=0 so selection only stops at the budget: we want exactly the most
+    # spread-out ``n`` poses regardless of absolute spacing.
+    idx = farthest_point_select(points, r_keep=0.0, budget=min(n, len(poses)))
+    return [poses[i] for i in idx]
+
+
 def generate_seeds(
     config: RunConfig,
     bounds_min: np.ndarray | None = None,
     bounds_max: np.ndarray | None = None,
     origin: np.ndarray | None = None,
     renderer: Renderer | None = None,
+    capture_poses: list[Pose] | None = None,
+    up_axis: str | None = None,
 ) -> list[Pose]:
     """Generate seed pose candidates spread across the scene floor.
 
-    When a renderer with a density grid is available, seeds are sampled from
-    low-density (sparse) regions so walks start where coverage is most needed.
-    Otherwise, seeds are placed on a regular floor grid. A set of candidates
-    from the known-good ``origin`` (facing different directions) is always
-    appended as a fallback.
+    When ``capture_poses`` (the camera poses the splat was reconstructed from)
+    are available, they are used as the candidate pool: every one is a known-good
+    viewpoint that looks at real geometry, so seeds never land in empty space.
+    They are spread across the floor via farthest-point selection and keep their
+    original orientation.
+
+    Otherwise, when a renderer with a density grid is available, seeds are sampled
+    from reconstructed regions; failing that, seeds are placed on a regular floor
+    grid. A set of candidates from the known-good ``origin`` (facing different
+    directions) is always appended as a fallback.
     """
-    a, b = _FLOOR_AXES[config.up_axis]
-    up_idx = _UP_INDEX[config.up_axis]
+    ua = up_axis if up_axis is not None else config.up_axis
+    if ua == "auto":  # defensive: callers normally pass an already-resolved axis
+        ua = "y"
+    a, b = _floor_axes(ua)
+    up_idx = axis_index(ua)
     bmin = np.array(config.bounds_min if bounds_min is None else bounds_min, dtype=np.float64)
     bmax = np.array(config.bounds_max if bounds_max is None else bounds_max, dtype=np.float64)
     safe_origin = (bmin + bmax) / 2.0 if origin is None else origin.copy()
@@ -337,25 +405,43 @@ def generate_seeds(
     good_height = float(safe_origin[up_idx])
 
     n_candidates = max(config.num_seeds * 3, 12)
+
+    if capture_poses:
+        candidates: list[Pose] = _spread_capture_poses(capture_poses, ua, n_candidates)
+        # Append origin-facing fallbacks so validation still has options if a
+        # capture pose renders poorly (e.g. a floater-only view).
+        n_origin = max(config.num_seeds, 4)
+        for i in range(n_origin):
+            angle = 2.0 * math.pi * i / n_origin
+            target = safe_origin.copy()
+            target[a] += math.cos(angle)
+            target[b] += math.sin(angle)
+            candidates.append(
+                Pose(
+                    position=safe_origin.copy(),
+                    rotation=look_at(safe_origin, target, ua),
+                )
+            )
+        return candidates
     frontier: list[np.ndarray] | None = None
     if renderer is not None:
-        frontier = _positions_from_density(renderer, config.up_axis, n_candidates)
+        frontier = _positions_from_density(renderer, ua, n_candidates)
     if frontier is None:
         frontier = _floor_seed_positions(
-            bmin, bmax, config.up_axis, n_candidates, height=good_height
+            bmin, bmax, ua, n_candidates, height=good_height
         )
 
     # Stamp the validated height onto density-sampled positions (they have height=0).
     for pos in frontier:
         pos[up_idx] = good_height
 
-    candidates: list[Pose] = []
+    candidates = []
     for pos in frontier:
         angle = 2.0 * math.pi * len(candidates) / max(n_candidates, 1)
         target = pos.copy()
         target[a] += math.cos(angle)
         target[b] += math.sin(angle)
-        candidates.append(Pose(position=pos.copy(), rotation=look_at(pos, target, config.up_axis)))
+        candidates.append(Pose(position=pos.copy(), rotation=look_at(pos, target, ua)))
 
     # Always include origin-facing candidates as a fallback seed pool
     n_origin = max(config.num_seeds, 4)
@@ -365,10 +451,64 @@ def generate_seeds(
         target[a] += math.cos(angle)
         target[b] += math.sin(angle)
         candidates.append(
-            Pose(position=safe_origin.copy(), rotation=look_at(safe_origin, target, config.up_axis))
+            Pose(position=safe_origin.copy(), rotation=look_at(safe_origin, target, ua))
         )
 
     return candidates
+
+
+def _select_seeds(
+    renderer: Renderer,
+    candidates: list[Pose],
+    *,
+    num_seeds: int,
+    step: float,
+    strict: bool,
+) -> list[Pose]:
+    """Keep the best valid ``num_seeds`` candidates.
+
+    A candidate is rejected when it looks into the void (mostly-infinite depth or
+    near-zero alpha). When ``strict`` (guessed density/grid seeds), candidates are
+    re-ranked by render quality (median depth x alpha) so the best guesses are
+    tried first, and an extra median-depth floor rejects views buried in geometry.
+
+    When not ``strict`` (capture-pose seeds), the incoming order is preserved:
+    the candidates are already real, known-good viewpoints spread across the floor
+    by farthest-point selection, so re-ranking by depth would only collapse that
+    spatial diversity toward whichever view happens to see furthest.
+    """
+    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
+
+    intrinsics = _PREVIEW_INTRINSICS
+
+    def _score(pose: Pose) -> float:
+        r = renderer.render(Camera(pose=pose, intrinsics=intrinsics))
+        if r.depth is None:
+            return -1.0
+        finite = r.depth[np.isfinite(r.depth)]
+        med = float(np.median(finite)) if finite.size > 0 else 0.0
+        alpha = float(r.alpha.mean()) if r.alpha is not None else 0.5
+        return med * alpha
+
+    ordered = sorted(candidates, key=_score, reverse=True) if strict else candidates
+
+    seeds: list[Pose] = []
+    for s in ordered:
+        if len(seeds) >= num_seeds:
+            break
+        result = renderer.render(Camera(pose=s, intrinsics=intrinsics))
+        if result.depth is None:
+            continue
+        finite_frac = float(np.isfinite(result.depth).mean())
+        near = result.depth[np.isfinite(result.depth)]
+        median_depth = float(np.median(near)) if near.size > 0 else 0.0
+        alpha_mean = float(result.alpha.mean()) if result.alpha is not None else 1.0
+        if finite_frac < 0.5 or alpha_mean < 0.15:
+            continue
+        if strict and median_depth < step:
+            continue
+        seeds.append(s)
+    return seeds or [ordered[0]]
 
 
 def build_vlm(config: RunConfig) -> VLMClient:
@@ -409,10 +549,13 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     space = ActionSpace(step=config.action_step_fraction * diag)
     coverage_radius = config.coverage_radius or (space.step * 2.0)
 
+    capture_poses = _load_capture_poses(config)
+    up_axis = _resolve_up_axis(config, capture_poses)
+
     scene = SplatScene(
         path=Path(config.ply_path) if config.ply_path else Path("data/scene.ply"),
         bounds=SceneBounds(min=bmin, max=bmax),
-        up_axis=config.up_axis,
+        up_axis=up_axis,
     )
     vlm = build_vlm(config)
 
@@ -427,7 +570,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
 
     builder = ObservationBuilder(
         renderer=renderer,
-        up_axis=config.up_axis,
+        up_axis=up_axis,
         map_size=config.map_size,
         task=config.task_prompt,
         depth_estimator=depth_estimator,
@@ -455,41 +598,18 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         session_policies=session_policies,
         max_steps=config.max_steps,
     )
-    seed_origin = _best_origin(renderer, config.up_axis, bmin, bmax)
+    seed_origin = _best_origin(renderer, up_axis, bmin, bmax)
 
-    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
+    seed_pool = capture_poses if config.use_capture_pose_seeds else []
+    candidates = generate_seeds(
+        config, bmin, bmax, origin=seed_origin, renderer=renderer, capture_poses=seed_pool,
+        up_axis=up_axis,
+    )
+    # Capture poses are known-good viewpoints, so validation can be lenient (see
+    # _select_seeds); guessed density/grid candidates need the strict checks.
+    seeds = _select_seeds(
+        renderer, candidates, num_seeds=config.num_seeds, step=space.step, strict=not seed_pool
+    )
 
-    intrinsics = _PREVIEW_INTRINSICS
-    candidates = generate_seeds(config, bmin, bmax, origin=seed_origin, renderer=renderer)
-
-    # Sort candidates by render quality so the best-looking positions are tried first.
-    def _seed_score(pose: Pose) -> float:
-        r = renderer.render(Camera(pose=pose, intrinsics=intrinsics))
-        if r.depth is None:
-            return -1.0
-        finite = r.depth[np.isfinite(r.depth)]
-        med = float(np.median(finite)) if finite.size > 0 else 0.0
-        alpha = float(r.alpha.mean()) if r.alpha is not None else 0.5
-        return med * alpha
-
-    scored = sorted(candidates, key=_seed_score, reverse=True)
-
-    seeds: list[Pose] = []
-    for s in scored:
-        if len(seeds) >= config.num_seeds:
-            break
-        result = renderer.render(Camera(pose=s, intrinsics=intrinsics))
-        if result.depth is None:
-            continue
-        finite_frac = float(np.isfinite(result.depth).mean())
-        near = result.depth[np.isfinite(result.depth)]
-        median_depth = float(np.median(near)) if near.size > 0 else 0.0
-        alpha_mean = float(result.alpha.mean()) if result.alpha is not None else 1.0
-        if finite_frac < 0.5 or median_depth < space.step or alpha_mean < 0.15:
-            continue
-        seeds.append(s)
-    if not seeds:
-        seeds = [scored[0]]
-
-    coverage = CoverageState.empty(config.up_axis, bmin, bmax)
+    coverage = CoverageState.empty(up_axis, bmin, bmax)
     return explorer, seeds, coverage

@@ -76,12 +76,13 @@ class GsplatRenderer:
                 packed=True,
             )
 
-        # gsplat rasterises with OpenGL Y-up framebuffer; flip to image convention.
-        rgb_float = rendered[0, :, :, :3].flip(0).clamp(0.0, 1.0)
+        # gsplat rasterises an OpenCV viewmat (world->camera, +Y down) to a
+        # top-left-origin image, so the output is already in image convention.
+        rgb_float = rendered[0, :, :, :3].clamp(0.0, 1.0)
         rgb = (rgb_float * 255.0).to(torch.uint8).cpu().numpy()
-        depth = rendered[0, :, :, 3].flip(0).cpu().numpy().astype(np.float32)
+        depth = rendered[0, :, :, 3].cpu().numpy().astype(np.float32)
         depth[depth <= 0] = np.inf
-        alpha = alphas[0, :, :, 0].flip(0).cpu().numpy().astype(np.float32)
+        alpha = alphas[0, :, :, 0].cpu().numpy().astype(np.float32)
 
         return RenderResult(rgb=rgb, camera=camera, depth=depth, alpha=alpha)
 

@@ -13,6 +13,8 @@ from pathlib import Path
 
 import numpy as np
 
+from gaussian_robot.render.camera import parse_up_axis
+
 
 @dataclass(frozen=True)
 class SceneBounds:
@@ -57,5 +59,4 @@ class SplatScene:
     up_axis: str = "y"
 
     def __post_init__(self) -> None:
-        if self.up_axis.lower() not in {"x", "y", "z"}:
-            raise ValueError(f"up_axis must be one of x/y/z, got {self.up_axis!r}")
+        parse_up_axis(self.up_axis)  # raises for anything but (optionally signed) x/y/z

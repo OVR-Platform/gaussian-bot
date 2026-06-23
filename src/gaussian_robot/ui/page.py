@@ -68,7 +68,7 @@ PAGE_HTML = """<!doctype html>
   <input id="task_prompt" placeholder="e.g. find the office door"/>
   <h2>Scene &amp; exploration</h2>
   <label>up axis</label>
-  <select id="up_axis"><option>y</option><option>x</option><option>z</option></select>
+  <select id="up_axis"><option>auto</option><option>y</option><option>-y</option><option>x</option><option>-x</option><option>z</option><option>-z</option></select>
   <div class="row">
     <div><label>bounds min (x,y,z)</label><input id="bounds_min"/></div>
     <div><label>bounds max (x,y,z)</label><input id="bounds_max"/></div>

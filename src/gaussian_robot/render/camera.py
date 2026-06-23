@@ -23,19 +23,37 @@ import numpy as np
 _IDENTITY_ROT = np.eye(3, dtype=np.float64)
 _ORIGIN = np.zeros(3, dtype=np.float64)
 
-_UP_VECTORS: dict[str, np.ndarray] = {
-    "x": np.array([1.0, 0.0, 0.0]),
-    "y": np.array([0.0, 1.0, 0.0]),
-    "z": np.array([0.0, 0.0, 1.0]),
-}
+_AXIS_INDEX: dict[str, int] = {"x": 0, "y": 1, "z": 2}
+
+
+def parse_up_axis(up_axis: str) -> tuple[int, float]:
+    """Parse an up-axis string into ``(axis_index, sign)``.
+
+    Accepts ``x``/``y``/``z`` and the signed forms ``+y``/``-y`` etc. The sign
+    matters: many reconstructions (e.g. COLMAP/3DGS scenes) have gravity-up along
+    a *negative* world axis, so ``-y`` is a valid and common up direction.
+    """
+    s = up_axis.strip().lower()
+    sign = 1.0
+    if s and s[0] in "+-":
+        sign = -1.0 if s[0] == "-" else 1.0
+        s = s[1:]
+    if s not in _AXIS_INDEX:
+        raise ValueError(f"up_axis must be one of x/y/z (optionally signed), got {up_axis!r}")
+    return _AXIS_INDEX[s], sign
+
+
+def axis_index(up_axis: str) -> int:
+    """Index (0/1/2) of the up axis, ignoring sign (for floor-plane projections)."""
+    return parse_up_axis(up_axis)[0]
 
 
 def up_vector(up_axis: str) -> np.ndarray:
-    """Unit vector along the named world axis."""
-    try:
-        return _UP_VECTORS[up_axis.lower()].copy()
-    except KeyError:
-        raise ValueError(f"up_axis must be one of x/y/z, got {up_axis!r}") from None
+    """Signed unit vector along the named world up axis (e.g. ``-y`` -> [0,-1,0])."""
+    idx, sign = parse_up_axis(up_axis)
+    v = np.zeros(3)
+    v[idx] = sign
+    return v
 
 
 @dataclass(frozen=True)
