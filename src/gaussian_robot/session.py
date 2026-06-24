@@ -815,6 +815,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         max_steps=config.max_steps,
         mark_target=config.pose_target,
         tween_frames=config.live_tween_frames,
+        actions_per_query=config.actions_per_query,
         height_field=height_field,
     )
     seed_origin = _best_origin(renderer, up_axis, bmin, bmax)

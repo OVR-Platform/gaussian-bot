@@ -248,7 +248,12 @@ class ObservationBuilder:
         "- Only stop when coverage is high and there is nowhere new to go. A wall, a dead end, or "
         "not seeing a gap is NEVER a reason to stop — move forward or turn around and keep going.\n"
         "\n"
-        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|look_up|look_down|mark|describe|stop>"}.'
+        "Reply ONLY with JSON — a short PLAN of 1-5 actions to run in order, e.g. "
+        '{"actions": ["forward", "forward", "turn_left", "forward"]}. (A single '
+        '{"action": "forward"} also works.) You are re-queried after the plan finishes, or '
+        "sooner if you get blocked — so plan a few steps toward the gap rather than one at a "
+        "time. Verbs: forward, back, turn_left, turn_right, move_up, move_down, look_up, "
+        "look_down, mark, describe, stop."
     )
 
     def build(

@@ -26,6 +26,29 @@ from gaussian_robot.vlm.observation import Observation
 
 _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 _JSON_ACTION_RE = re.compile(r'"action"\s*:\s*"([^"]+)"', re.IGNORECASE)
+_JSON_ACTIONS_RE = re.compile(r'"actions"\s*:\s*\[([^\]]*)\]', re.IGNORECASE | re.DOTALL)
+
+
+def parse_actions(raw: str) -> tuple[list[Action], bool]:
+    """Extract a planned action sequence from a model response.
+
+    Accepts ``{"actions": ["forward", "turn_left", ...]}`` (a plan) or the
+    single-action ``{"action": "..."}`` form. Returns ``(actions, parse_failed)``;
+    on a plan parse, unknown verbs are skipped. Falls back to :func:`parse_action`.
+    """
+    cleaned = _THINK_RE.sub("", raw)
+    m = _JSON_ACTIONS_RE.search(cleaned)
+    if m:
+        actions: list[Action] = []
+        for verb in re.findall(r'"([^"]+)"', m.group(1)):
+            try:
+                actions.append(Action(verb.strip().lower()))
+            except ValueError:
+                continue
+        if actions:
+            return actions, False
+    action, parse_failed = parse_action(raw)
+    return [action], parse_failed
 
 
 def parse_action(raw: str) -> tuple[Action, bool]:
@@ -161,8 +184,8 @@ class QwenVLMClient:
 
         raw = self._complete(list(self._history))
         self._history.append({"role": "assistant", "content": raw})
-        action, parse_failed = parse_action(raw)
-        return Decision(action=action, raw_text=raw, parse_failed=parse_failed)
+        actions, parse_failed = parse_actions(raw)
+        return Decision(action=actions[0], raw_text=raw, parse_failed=parse_failed, actions=actions)
 
     def describe(self, observation: Observation) -> str:
         raw = self._complete([self._user_message(observation)])

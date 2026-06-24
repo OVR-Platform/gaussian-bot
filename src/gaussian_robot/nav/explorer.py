@@ -159,6 +159,7 @@ class Explorer:
     mark_target: int = 0  # informational target shown to the VLM in [state]
     auto_mark: bool = True  # auto-mark a pose when well-positioned at a frontier
     tween_frames: int = 0  # interpolated RGB frames rendered between views (live smoothing)
+    actions_per_query: int = 1  # action chunking: max actions the VLM plans per query
     height_field: HeightField | None = None  # ground heights for terrain-following
     _marks_total: int = 0  # running count of marked fill-in poses this session
     _mark_floor: list[np.ndarray] = field(default_factory=list)  # floor pos of marks (dedup)
@@ -313,6 +314,76 @@ class Explorer:
         delta = (ground + self._eye_offset) - float(pose.position @ up)
         return Pose(position=pose.position + delta * up, rotation=pose.rotation)
 
+    def _step_action(
+        self,
+        robot: Robot,
+        action: Action,
+        decision: Decision,
+        observation: Observation,
+        render: RenderResult,
+        coverage: CoverageState,
+        trail: list[Pose],
+        result: WalkResult,
+        action_history: list[str],
+        tween: list[np.ndarray],
+        *,
+        walk_id: str,
+        step: int,
+    ) -> tuple[str | None, bool]:
+        """Execute one movement action, record/emit it, and run the walk-stop policies.
+
+        Returns ``(stop_reason or None, plan_invalidated)`` — ``plan_invalidated`` is
+        True when the step was blocked or degenerate (the chunked plan is now stale).
+        """
+        action_history.append(action.value)
+        # Free distance ahead from the *current* metric render caps a forward step
+        # so the camera halts short of obstacles instead of burrowing in.
+        clearance = wall_distance_from_depth(render.depth)
+        next_pose = apply_action(
+            robot.pose, action, self.action_space, self.scene.up_axis, clearance=clearance
+        )
+        if action in (Action.FORWARD, Action.BACK):
+            next_pose = self._follow_terrain(next_pose)  # stay above local ground on slopes
+        blocked = self._forward_blocked(action, clearance)
+        novelty_next = coverage.novelty(next_pose)
+        degenerate = self._is_degenerate(next_pose, render)
+
+        ctx = WalkContext(
+            step=step, action=action, novelty=novelty_next, pose=next_pose, degenerate=degenerate
+        )
+        for p in self.walk_policies:
+            p.update(ctx)
+
+        result.steps.append(
+            WalkStep(
+                pose=next_pose,
+                action=action,
+                novelty=novelty_next,
+                degenerate=degenerate,
+                raw_text=decision.raw_text,
+                blocked=blocked,
+            )
+        )
+        if action is not Action.STOP and not degenerate and not blocked:
+            self._commit_move(
+                robot, next_pose, render, coverage, trail, result, walk_id=walk_id, step=step
+            )
+        self._emit_step(
+            walk_id,
+            step,
+            observation,
+            decision,
+            action,
+            next_pose,
+            novelty_next,
+            degenerate,
+            coverage,
+            trail,
+            blocked=blocked,
+            tween=tween,
+        )
+        return walk_stop_reason(self.walk_policies), (blocked or degenerate)
+
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, walk_id: str = ""
     ) -> WalkResult:
@@ -336,6 +407,8 @@ class Explorer:
         action_history: list[str] = []
         stop_reason = "step_budget"
         prev_view_pose: Pose | None = None  # last view shown, for the live tween
+        plan: list[Action] = []  # remaining planned actions (action chunking)
+        plan_decision: Decision | None = None  # the VLM decision that produced `plan`
         for step_idx in range(self.max_steps):
             if step_idx == 0:
                 scene_description = self._describe_step(
@@ -359,8 +432,14 @@ class Explorer:
                 marks=self._marks_total,
                 mark_target=self.mark_target,
             )
-            decision = self.vlm.act(observation)
-            action = decision.action
+            if not plan:  # action chunking: query the VLM only when the plan runs out
+                plan_decision = self.vlm.act(observation)
+                actions = plan_decision.actions or [plan_decision.action]
+                plan = list(actions)[: max(1, self.actions_per_query)]
+            assert plan_decision is not None
+            decision = plan_decision
+            action = plan.pop(0)
+            step = step_idx + 1
 
             if action is Action.DESCRIBE:
                 scene_description = self._describe_step(
@@ -368,9 +447,10 @@ class Explorer:
                     result,
                     action_history,
                     walk_id=walk_id,
-                    step=step_idx + 1,
+                    step=step,
                     raw_text=decision.raw_text,
                 )
+                plan = []  # re-plan with the fresh description
                 continue
 
             if action is Action.MARK:
@@ -379,73 +459,27 @@ class Explorer:
                     result,
                     action_history,
                     walk_id=walk_id,
-                    step=step_idx + 1,
+                    step=step,
                     raw_text=decision.raw_text,
                 )
-                continue
+                continue  # marking doesn't change the route — keep executing the plan
 
-            action_history.append(action.value)
-            # Free distance ahead from the *current* metric render caps a forward
-            # step so the camera halts short of obstacles instead of burrowing in.
-            clearance = wall_distance_from_depth(render.depth)
-            next_pose = apply_action(
-                robot.pose, action, self.action_space, self.scene.up_axis, clearance=clearance
-            )
-            if action in (Action.FORWARD, Action.BACK):
-                next_pose = self._follow_terrain(next_pose)  # stay above local ground on slopes
-            blocked = self._forward_blocked(action, clearance)
-            novelty_next = coverage.novelty(next_pose)
-            degenerate = self._is_degenerate(next_pose, render)
-
-            ctx = WalkContext(
-                step=step_idx + 1,
-                action=action,
-                novelty=novelty_next,
-                pose=next_pose,
-                degenerate=degenerate,
-            )
-            for p in self.walk_policies:
-                p.update(ctx)
-
-            result.steps.append(
-                WalkStep(
-                    pose=next_pose,
-                    action=action,
-                    novelty=novelty_next,
-                    degenerate=degenerate,
-                    raw_text=decision.raw_text,
-                    blocked=blocked,
-                )
-            )
-
-            if action is not Action.STOP and not degenerate and not blocked:
-                self._commit_move(
-                    robot,
-                    next_pose,
-                    render,
-                    coverage,
-                    trail,
-                    result,
-                    walk_id=walk_id,
-                    step=step_idx + 1,
-                )
-
-            self._emit_step(
-                walk_id,
-                step_idx + 1,
-                observation,
-                decision,
+            reason, invalidated = self._step_action(
+                robot,
                 action,
-                next_pose,
-                novelty_next,
-                degenerate,
+                decision,
+                observation,
+                render,
                 coverage,
                 trail,
-                blocked=blocked,
-                tween=tween,
+                result,
+                action_history,
+                tween,
+                walk_id=walk_id,
+                step=step,
             )
-
-            reason = walk_stop_reason(self.walk_policies)
+            if invalidated:
+                plan = []  # blocked/degenerate: the plan is stale, re-query next step
             if reason is not None:
                 stop_reason = reason
                 break

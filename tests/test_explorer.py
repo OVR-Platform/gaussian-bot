@@ -28,7 +28,7 @@ from gaussian_robot.nav.terrain import build_height_field
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
-from gaussian_robot.vlm.client import Decision
+from gaussian_robot.vlm.client import Decision, VLMClient
 from gaussian_robot.vlm.observation import Observation
 
 _BOUNDS = (np.zeros(3), np.array([10.0, 10.0, 10.0]))
@@ -82,21 +82,23 @@ def _explorer(
     session_policies: list[SessionStopPolicy] | None = None,
     max_steps: int = 5,
     depth_value: float = 5.0,
+    vlm: VLMClient | None = None,
+    actions_per_query: int = 1,
 ) -> Explorer:
     renderer = FakeRenderer(depth_value=depth_value)
-    vlm = ScriptedVLM(actions)
     space = ActionSpace(step=1.0)
     builder = ObservationBuilder(renderer=renderer, up_axis="y", map_size=64)
     return Explorer(
         scene=_scene(),
         renderer=renderer,
-        vlm=vlm,
+        vlm=vlm or ScriptedVLM(actions),
         observation_builder=builder,
         action_space=space,
         coverage_radius=1.0,
         walk_policies=walk_policies or [],
         session_policies=session_policies or [],
         max_steps=max_steps,
+        actions_per_query=actions_per_query,
     )
 
 
@@ -262,6 +264,42 @@ def test_auto_mark_skips_when_far_or_off_angle() -> None:
     explorer.observation_builder.nearest_gap = lambda pose: (1.0, 80.0)  # type: ignore[method-assign]
     explorer._maybe_auto_mark(robot, result, walk_id="walk0", step=1)  # facing away
     assert not result.marks
+
+
+@dataclass
+class PlanVLM:
+    """Returns a fixed multi-action plan each query; counts how often it is queried."""
+
+    plan: list[Action]
+    calls: int = 0
+
+    def reset(self) -> None:
+        pass  # keep `calls` across the walk so the test can count queries
+
+    def act(self, observation: Observation) -> Decision:
+        self.calls += 1
+        return Decision(action=self.plan[0], raw_text="plan", actions=list(self.plan))
+
+    def describe(self, observation: Observation) -> str:
+        return "desc"
+
+
+def test_action_chunking_executes_plan_with_one_query() -> None:
+    vlm = PlanVLM(plan=[Action.FORWARD, Action.FORWARD, Action.FORWARD])
+    explorer = _explorer([], vlm=vlm, actions_per_query=3, max_steps=4)
+    state = _state()
+    result = explorer.run_walk(Pose(), state, walk_id="w")
+    forwards = [s for s in result.steps if s.action is Action.FORWARD]
+    assert len(forwards) == 3  # step0 describe, then 3 planned forwards
+    assert vlm.calls == 1  # the whole 3-action plan came from a single query
+
+
+def test_action_chunking_requeries_when_plan_exhausted() -> None:
+    vlm = PlanVLM(plan=[Action.FORWARD, Action.FORWARD])
+    explorer = _explorer([], vlm=vlm, actions_per_query=2, max_steps=7)
+    explorer.run_walk(Pose(), _state(), walk_id="w")
+    # step0 describe, then 6 forwards executed in plans of 2 -> 3 queries
+    assert vlm.calls == 3
 
 
 def test_follow_terrain_sets_camera_above_local_ground() -> None:

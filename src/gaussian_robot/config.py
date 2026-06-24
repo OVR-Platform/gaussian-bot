@@ -71,6 +71,13 @@ class RunConfig(BaseModel):
     max_steps: int = Field(
         default=120, ge=1, description="Max steps per walk. Higher = longer, deeper walks."
     )
+    actions_per_query: int = Field(
+        default=4,
+        ge=1,
+        description="Action chunking: max actions the VLM plans per query. The plan runs "
+        "step-by-step and is re-queried when exhausted or interrupted (blocked / degenerate / "
+        "describe). Higher = fewer VLM calls/tokens, less reactive. 1 = decide every step.",
+    )
     pose_budget: int = Field(default=400, ge=1)
     pose_target: int = Field(
         default=30,

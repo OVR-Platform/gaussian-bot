@@ -8,7 +8,7 @@ API — will live in its own module and be injected.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
 from gaussian_robot.nav.action import Action
@@ -17,23 +17,28 @@ from gaussian_robot.vlm.observation import Observation
 
 @dataclass(frozen=True)
 class Decision:
-    """The VLM's per-step output.
+    """The VLM's output for one query.
 
     Attributes
     ----------
     action:
-        The chosen :class:`Action` verb. ``STOP`` is handled (demoted) by the
-        termination policies, not by the executor.
+        The first/chosen :class:`Action` verb. ``STOP`` is handled (demoted) by
+        the termination policies, not by the executor.
     raw_text:
         The full decoded model response, kept for logging/reproducibility.
     parse_failed:
         ``True`` when no known action verb was found in the response and the
         fallback action was used instead.
+    actions:
+        The full planned sequence (action chunking). Empty means "just
+        ``action``". The explorer executes these in order, re-querying when the
+        plan is exhausted or invalidated (blocked / degenerate / describe).
     """
 
     action: Action
     raw_text: str = ""
     parse_failed: bool = False
+    actions: list[Action] = field(default_factory=list)
 
 
 @runtime_checkable
