@@ -82,6 +82,11 @@ class RunConfig(BaseModel):
         ge=1,
         description="Number of walk seeds. Fewer = budget spent exploring deeply, not restarting.",
     )
+    terrain_follow: bool = Field(
+        default=True,
+        description="Keep the camera at a constant eye-height above local ground on "
+        "non-flat scenes (uses a one-time gaussian height field). Disable for flat scenes.",
+    )
     live_tween_frames: int = Field(
         default=6,
         ge=0,

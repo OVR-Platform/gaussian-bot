@@ -8,6 +8,7 @@ from itertools import cycle
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from gaussian_robot.events import MarkEvent, SessionEndEvent, SessionStartEvent, WalkEndEvent
 from gaussian_robot.metrics.coverage import CoverageState
@@ -23,6 +24,7 @@ from gaussian_robot.nav.stop import (
     SessionStopPolicy,
     StopPolicy,
 )
+from gaussian_robot.nav.terrain import build_height_field
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
@@ -260,6 +262,19 @@ def test_auto_mark_skips_when_far_or_off_angle() -> None:
     explorer.observation_builder.nearest_gap = lambda pose: (1.0, 80.0)  # type: ignore[method-assign]
     explorer._maybe_auto_mark(robot, result, walk_id="walk0", step=1)  # facing away
     assert not result.marks
+
+
+def test_follow_terrain_sets_camera_above_local_ground() -> None:
+    means = np.array([[5.0, 0.0, 5.0], [5.0, 1.0, 5.0], [5.0, 2.0, 5.0]])  # ground near (5,5)
+    hf = build_height_field(means, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
+    explorer = _explorer([Action.STOP])
+    explorer.height_field = hf
+    explorer._eye_offset = 1.5
+    adjusted = explorer._follow_terrain(Pose(position=np.array([5.0, 9.0, 5.0])))
+    ground = hf.ground(5.0, 5.0)
+    assert ground is not None
+    assert adjusted.position[1] == pytest.approx(ground + 1.5)  # up-coord pinned to ground+eye
+    assert np.allclose(adjusted.position[[0, 2]], [5.0, 5.0])  # floor position unchanged
 
 
 def test_render_is_runtime_checkable() -> None:

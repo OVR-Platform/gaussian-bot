@@ -48,6 +48,7 @@ from gaussian_robot.nav.stop import (
     StopPolicy,
     StuckGuard,
 )
+from gaussian_robot.nav.terrain import HeightField, build_height_field
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import CameraIntrinsics, Pose, axis_index, up_vector
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
@@ -791,6 +792,17 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         QualityTarget(radius=coverage_radius, tau=0.7),
         SeedExhaustion(),
     ]
+    height_field: HeightField | None = None
+    if config.terrain_follow:
+        cloud_means = getattr(getattr(renderer, "cloud", None), "means", None)
+        if cloud_means is not None:
+            means_np = (
+                np.asarray(cloud_means.detach().cpu())
+                if hasattr(cloud_means, "detach")
+                else np.asarray(cloud_means)
+            )
+            height_field = build_height_field(means_np, up_axis, bmin, bmax)
+
     explorer = Explorer(
         scene=scene,
         renderer=renderer,
@@ -803,6 +815,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         max_steps=config.max_steps,
         mark_target=config.pose_target,
         tween_frames=config.live_tween_frames,
+        height_field=height_field,
     )
     seed_origin = _best_origin(renderer, up_axis, bmin, bmax)
 

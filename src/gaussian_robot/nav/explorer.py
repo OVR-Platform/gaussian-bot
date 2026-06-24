@@ -53,8 +53,9 @@ from gaussian_robot.nav.stop import (
     session_stop_reason,
     walk_stop_reason,
 )
+from gaussian_robot.nav.terrain import HeightField
 from gaussian_robot.render.base import Renderer, RenderResult
-from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose
+from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose, up_vector
 from gaussian_robot.splat.scene import SplatScene
 from gaussian_robot.vlm.client import Decision, VLMClient
 from gaussian_robot.vlm.observation import Observation
@@ -158,8 +159,10 @@ class Explorer:
     mark_target: int = 0  # informational target shown to the VLM in [state]
     auto_mark: bool = True  # auto-mark a pose when well-positioned at a frontier
     tween_frames: int = 0  # interpolated RGB frames rendered between views (live smoothing)
+    height_field: HeightField | None = None  # ground heights for terrain-following
     _marks_total: int = 0  # running count of marked fill-in poses this session
     _mark_floor: list[np.ndarray] = field(default_factory=list)  # floor pos of marks (dedup)
+    _eye_offset: float | None = None  # camera height above local ground for this walk
 
     def _describe_step(
         self,
@@ -286,6 +289,30 @@ class Explorer:
         trail.append(next_pose)
         self._maybe_auto_mark(robot, result, walk_id=walk_id, step=step)
 
+    def _seed_eye_offset(self, seed_pose: Pose) -> float | None:
+        """Height of the seed camera above its local ground (None if unavailable)."""
+        if self.height_field is None:
+            return None
+        g = self.height_field.ground(float(seed_pose.position[0]), float(seed_pose.position[2]))
+        if g is None:
+            return None
+        return float(seed_pose.position @ up_vector(self.scene.up_axis)) - g
+
+    def _follow_terrain(self, pose: Pose) -> Pose:
+        """Re-set ``pose``'s up-coordinate to local ground + this walk's eye height.
+
+        Keeps the camera a constant height above the terrain on sloped scenes. A no-op
+        when no height field is available or the ground here is unknown.
+        """
+        if self.height_field is None or self._eye_offset is None:
+            return pose
+        ground = self.height_field.ground(float(pose.position[0]), float(pose.position[2]))
+        if ground is None:
+            return pose
+        up = up_vector(self.scene.up_axis)
+        delta = (ground + self._eye_offset) - float(pose.position @ up)
+        return Pose(position=pose.position + delta * up, rotation=pose.rotation)
+
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, walk_id: str = ""
     ) -> WalkResult:
@@ -303,6 +330,8 @@ class Explorer:
         result.steps.append(
             WalkStep(pose=seed_pose, action=Action.STOP, novelty=novelty_seed, degenerate=False)
         )
+
+        self._eye_offset = self._seed_eye_offset(seed_pose)
 
         action_history: list[str] = []
         stop_reason = "step_budget"
@@ -362,6 +391,8 @@ class Explorer:
             next_pose = apply_action(
                 robot.pose, action, self.action_space, self.scene.up_axis, clearance=clearance
             )
+            if action in (Action.FORWARD, Action.BACK):
+                next_pose = self._follow_terrain(next_pose)  # stay above local ground on slopes
             blocked = self._forward_blocked(action, clearance)
             novelty_next = coverage.novelty(next_pose)
             degenerate = self._is_degenerate(next_pose, render)
