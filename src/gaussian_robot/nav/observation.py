@@ -42,6 +42,22 @@ def wall_distance_from_depth(depth: np.ndarray | None) -> float | None:
     return float(np.median(finite))
 
 
+_ROTATION_ACTIONS = frozenset({"turn_left", "turn_right", "look_up", "look_down"})
+
+
+def _rotation_streak(action_history: list[str] | None) -> int:
+    """How many trailing actions were pure rotations (no translation) — anti-spin cue."""
+    if not action_history:
+        return 0
+    streak = 0
+    for a in reversed(action_history):
+        if a in _ROTATION_ACTIONS:
+            streak += 1
+        else:
+            break
+    return streak
+
+
 def frontier_mask(
     density_grid: np.ndarray, *, empty_max: float = 0.02, observed_min: float = 0.10
 ) -> np.ndarray:
@@ -148,26 +164,27 @@ class ObservationBuilder:
         "for the bearing/distance to the closest gap.\n"
         "\n"
         "STRATEGY:\n"
-        "1. STEER TOWARD THE GAP: turn until the magenta diamond / 'nearest gap' bearing is "
-        "roughly ahead, then move forward through open space toward it.\n"
-        "2. If wall_distance is small or [depth] is mostly bright, an obstacle is in the way — "
-        "turn or back up to find a clear route around it, then resume toward the gap.\n"
-        "3. Don't chase blur for its own sake: blur from being too close to a surface is not a "
-        "gap. Only under-observed OPEN regions (the gap marker, dark [confidence] holes you can "
-        "approach) are worth reaching.\n"
-        "4. MARK when you are positioned with a clear, head-on view of a gap that needs filling: "
+        "1. FORWARD IS YOUR DEFAULT. Only turning never gets you anywhere — turns and looks do "
+        "NOT change your position, only forward/back do. If the way ahead is open (wall_distance "
+        "is not small), move FORWARD to make progress and reveal new area.\n"
+        "2. NEVER turn more than twice in a row. After at most two turns you MUST move forward or "
+        "back. Do not oscillate turn_left/turn_right — pick a direction and commit by moving.\n"
+        "3. Gap is a soft bias, not a precondition: if the 'nearest gap' bearing is well off to "
+        "one side, turn toward it once or twice and then advance. You do NOT need it perfectly "
+        "centred — once it's roughly ahead, MOVE.\n"
+        "4. Obstacle handling: if wall_distance is small or [depth] is mostly bright you face a "
+        "surface — turn once or twice OR back up to find an open direction, then move. Don't keep "
+        "turning in place.\n"
+        "5. MARK when you are positioned with a clear, head-on view of a gap that needs filling: "
         "this records your current viewpoint as a proposed NEW VIEW for the reconstruction — the "
-        "actual deliverable. Mark once per distinct gap, after you've framed it well; then move on "
-        "to the next gap. Don't mark walls/obstacles or views you're too close to.\n"
-        "5. LOOK_UP / LOOK_DOWN to check ceilings/floors when entering a new area; DESCRIBE if "
+        "actual deliverable. Mark once per distinct gap, after you've framed it well; then move on.\n"
+        "6. LOOK_UP / LOOK_DOWN to check ceilings/floors when entering a new area; DESCRIBE if "
         "disoriented.\n"
-        "6. Check [history]: patterns like forward,back,forward,back mean you are oscillating "
-        "against an obstacle — break out by turning toward the gap bearing.\n"
         "\n"
         "STOPPING:\n"
-        "- Keep going while a gap is reported in [state] or visible on the map.\n"
-        "- Only stop when there is no gap in range AND coverage is high. A wall or dead end is "
-        "never a reason to stop — turn around.\n"
+        "- Keep going while there is open space to explore or a gap is reported in [state].\n"
+        "- Only stop when coverage is high and there is nowhere new to go. A wall, a dead end, or "
+        "not seeing a gap is NEVER a reason to stop — move forward or turn around and keep going.\n"
         "\n"
         'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|look_up|look_down|mark|describe|stop>"}.'
     )
@@ -217,6 +234,12 @@ class ObservationBuilder:
             recent = action_history[-8:]
             parts.append(f"[history] last actions: {', '.join(recent)}")
         parts.append(state_line)
+        spin = _rotation_streak(action_history)
+        if spin >= 2:
+            parts.append(
+                f"[!] You have turned {spin}× in a row WITHOUT moving — turning does not change "
+                "your position. Move FORWARD now (or BACK if blocked); do not turn again."
+            )
 
         obs = Observation(
             panels=[

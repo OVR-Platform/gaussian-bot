@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from gaussian_robot.nav.observation import frontier_mask
+from gaussian_robot.nav.observation import _rotation_streak, frontier_mask
 
 
 def test_frontier_is_empty_cell_adjacent_to_observed() -> None:
@@ -22,3 +22,11 @@ def test_frontier_is_empty_cell_adjacent_to_observed() -> None:
 def test_no_frontier_when_uniform() -> None:
     assert not frontier_mask(np.ones((4, 4))).any()  # all observed, nothing empty
     assert not frontier_mask(np.zeros((4, 4))).any()  # all empty, nothing observed
+
+
+def test_rotation_streak_counts_trailing_turns() -> None:
+    assert _rotation_streak(None) == 0
+    assert _rotation_streak(["forward"]) == 0
+    assert _rotation_streak(["forward", "turn_left", "turn_right"]) == 2
+    assert _rotation_streak(["turn_left", "turn_left", "forward"]) == 0  # trailing action moved
+    assert _rotation_streak(["forward", "look_up", "turn_left", "turn_left"]) == 3
