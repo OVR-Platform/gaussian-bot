@@ -25,15 +25,17 @@ class SessionStartEvent:
     bounds_min: np.ndarray
     bounds_max: np.ndarray
     up_axis: str
-    total_seeds: int
+    total_seeds: int  # seeds actually launched (== len(seed_floor))
     seed_floor: np.ndarray  # (S, 2) floor positions of the seeds walks start from
+    seed_kinds: list[str]  # per-seed provenance: "capture" | "origin_fallback" | "density" | "grid"
+    requested_seeds: int  # how many were asked for (may exceed total_seeds if some were rejected)
 
 
 @dataclass(frozen=True)
 class StepEvent:
     """Emitted after each step of a walk."""
 
-    seed_id: str
+    walk_id: str
     step: int
     budget: int
     observation: Observation
@@ -53,7 +55,7 @@ class StepEvent:
 class WalkEndEvent:
     """Emitted when one walk ends, carrying *why* it stopped."""
 
-    seed_id: str
+    walk_id: str
     reason: str  # coverage_plateau | bounds | stuck | step_budget
     steps: int
 
@@ -62,7 +64,7 @@ class WalkEndEvent:
 class SceneDescribeEvent:
     """Emitted when the VLM describes (or re-describes) the scene."""
 
-    seed_id: str
+    walk_id: str
     step: int
     description: str
 

@@ -74,4 +74,4 @@ def test_build_session_uses_ply_renderer_when_path_is_set(tmp_path: Path) -> Non
     assert isinstance(explorer.renderer, PLYPointRenderer)
     assert np.allclose(coverage.bounds_min, [-0.2, 0.0, 3.0])
     assert np.allclose(coverage.bounds_max, [0.2, 0.0, 5.0])
-    assert all(explorer.scene.bounds.contains(seed.position) for seed in seeds)
+    assert all(explorer.scene.bounds.contains(seed.pose.position) for seed in seeds)

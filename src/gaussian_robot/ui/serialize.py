@@ -26,13 +26,15 @@ def event_to_message(event: Any) -> dict[str, Any]:
             "bounds_max": event.bounds_max.tolist(),
             "up_axis": event.up_axis,
             "total_seeds": event.total_seeds,
+            "requested_seeds": event.requested_seeds,
             "seeds": event.seed_floor.tolist(),
+            "seed_kinds": event.seed_kinds,
         }
     if isinstance(event, StepEvent):
         panels = {label: jpeg_data_url(img) for label, img in event.observation.panels}
         return {
             "type": "step",
-            "seed_id": event.seed_id,
+            "walk_id": event.walk_id,
             "step": event.step,
             "budget": event.budget,
             "action": event.action.value,
@@ -50,14 +52,14 @@ def event_to_message(event: Any) -> dict[str, Any]:
     if isinstance(event, WalkEndEvent):
         return {
             "type": "walk_end",
-            "seed_id": event.seed_id,
+            "walk_id": event.walk_id,
             "reason": event.reason,
             "steps": event.steps,
         }
     if isinstance(event, SceneDescribeEvent):
         return {
             "type": "scene_describe",
-            "seed_id": event.seed_id,
+            "walk_id": event.walk_id,
             "step": event.step,
             "description": event.description,
         }

@@ -195,7 +195,10 @@ function setStatus(t){ document.getElementById("status").textContent = t; }
 function setChips(o){ document.getElementById("chips").innerHTML =
   Object.entries(o).map(([k,v])=>`<span class="chip"><b>${k}</b> ${v}</span>`).join(""); }
 
-let SEEDS = [];
+let SEEDS = [], SEED_KINDS = [];
+const seedColor = kind => (kind === "capture" ? "#f5be28" : "#e0662a");  // amber=real, orange=synthetic
+const walkIndex = wid => { const n = String(wid).match(/\\d+/); return n ? parseInt(n[0], 10) : -1; };
+const walkKind = wid => SEED_KINDS[walkIndex(wid)] || "?";
 function drawWorld(ctx, sampled, trail, pose){
   if(!BOUNDS) return;
   const [a,b] = floorAxes(UP);
@@ -208,11 +211,11 @@ function drawWorld(ctx, sampled, trail, pose){
   ctx.strokeRect(tx(lo[0]),ty(hi[1]),tx(hi[0])-tx(lo[0]),ty(lo[1])-ty(hi[1]));
   ctx.fillStyle="#285ad0";
   (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[0]),ty(p[1]),2,0,7); ctx.fill(); });
-  // seeds: where walks start from (hollow amber rings, drawn under the trail/pose)
-  ctx.strokeStyle="#f5be28"; ctx.lineWidth=2;
-  (SEEDS||[]).forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]);
-    ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.stroke();
-    ctx.fillStyle="#f5be28"; ctx.font="9px sans-serif"; ctx.fillText(i, x+7, y+3); });
+  // seeds: where walks start from. Amber ring = real capture pose, orange = synthetic fallback.
+  ctx.lineWidth=2; ctx.font="9px sans-serif";
+  (SEEDS||[]).forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]); const c=seedColor(SEED_KINDS[i]);
+    ctx.strokeStyle=c; ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.stroke();
+    ctx.fillStyle=c; ctx.fillText(i, x+7, y+3); });
   if(trail && trail.length>1){
     ctx.strokeStyle="#2aa846"; ctx.lineWidth=2; ctx.beginPath();
     trail.forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
@@ -220,7 +223,7 @@ function drawWorld(ctx, sampled, trail, pose){
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
   // legend
   ctx.font="11px sans-serif"; ctx.textBaseline="middle";
-  const items=[["#285ad0","visited"],["#f5be28","seed (walk start)"],["#2aa846","current trail"],["#d6201e","robot"]];
+  const items=[["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"]];
   items.forEach(([c,t],i)=>{ const y=14+i*16; ctx.fillStyle=c;
     ctx.beginPath(); ctx.arc(14,y,4,0,7); ctx.fill(); ctx.fillStyle="#bbb"; ctx.fillText(t,24,y); });
   // world axis labels: horizontal = +floor axis a, vertical = +floor axis b (up axis is out of plane)
@@ -283,21 +286,23 @@ async function run(endpoint){
   stream.onmessage = (e)=>{
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
-      SEEDS = m.seeds || [];
+      SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || [];
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
       drawWorld(document.getElementById("world-map").getContext("2d"), [], [], null);
-      setChips({status:"running", vlm:vlmMode, seeds:m.total_seeds, up:UP}); return; }
+      const seedsLabel = (m.requested_seeds && m.requested_seeds !== m.total_seeds)
+        ? `${m.total_seeds}/${m.requested_seeds}` : `${m.total_seeds}`;
+      setChips({status:"running", vlm:vlmMode, seeds:seedsLabel, up:UP}); return; }
     if(m.type==="walk_end"){
       const log = document.getElementById("action-log");
-      log.textContent += `── ${m.seed_id} ended: ${m.reason} (${m.steps} steps) ──\n`;
+      log.textContent += `── ${m.walk_id} (${walkKind(m.walk_id)}) ended: ${m.reason} (${m.steps} steps) ──\n`;
       log.scrollTop = log.scrollHeight; return; }
     if(m.type==="scene_describe"){
       document.getElementById("scene-desc").textContent = m.description || "—";
       const log = document.getElementById("action-log");
-      log.textContent += `[${m.seed_id} #${m.step}] describe: ${m.description}\n`;
+      log.textContent += `[${m.walk_id} #${m.step}] describe: ${m.description}\n`;
       log.scrollTop = log.scrollHeight;
-      setChips({seed:m.seed_id, step:m.step, action:"describe"});
+      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, step:m.step, action:"describe"});
       return; }
     if(m.type==="session_end"){ setStatus("ended: "+m.reason); setChips({status:"ended",reason:m.reason,
       steps:m.total_steps, poses:m.total_poses}); stream.close(); stream=null; stepping=false;
@@ -313,9 +318,9 @@ async function run(endpoint){
       const log = document.getElementById("action-log");
       const pos = m.pose.map(v=>v.toFixed(1)).join(",");
       const flag = m.blocked ? " [blocked: wall ahead]" : (m.degenerate ? " [degenerate]" : "");
-      log.textContent += `[${m.seed_id} #${m.step}] ${m.action} → (${pos})  nov=${m.novelty.toFixed(2)}${flag}\n`;
+      log.textContent += `[${m.walk_id} #${m.step}] ${m.action} → (${pos})  nov=${m.novelty.toFixed(2)}${flag}\n`;
       log.scrollTop = log.scrollHeight;
-      setChips({seed:m.seed_id, step:`${m.step}/${m.budget}`, action:m.action,
+      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, step:`${m.step}/${m.budget}`, action:m.action,
         novelty:m.novelty.toFixed(2), blocked:m.blocked?"!":"", degenerate:m.degenerate?"!":"",
         "cov(floor)":(100*m.coverage_floor).toFixed(1)+"%",
         "cov(pose)":(100*m.coverage_pose_space).toFixed(1)+"%"});

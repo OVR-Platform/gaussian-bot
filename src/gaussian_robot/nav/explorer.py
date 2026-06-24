@@ -51,6 +51,23 @@ from gaussian_robot.vlm.observation import Observation
 _log = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class SeedPose:
+    """A pose a walk starts from, with its provenance.
+
+    ``kind`` records where the seed came from so the deliverable and the UI can
+    distinguish a real captured viewpoint from a synthesised fallback:
+
+    - ``"capture"`` — a real camera the splat was reconstructed from (best).
+    - ``"density"`` — sampled from the reconstructed-density grid (a guess).
+    - ``"grid"`` — a plain floor-grid position (last-resort guess).
+    - ``"origin_fallback"`` — synthesised at the validated origin, facing out.
+    """
+
+    pose: Pose
+    kind: str = "capture"
+
+
 @dataclass
 class WalkStep:
     """One recorded step of a walk."""
@@ -67,7 +84,7 @@ class WalkStep:
 class WalkResult:
     """The trajectory produced by one walk."""
 
-    seed_id: str
+    walk_id: str
     steps: list[WalkStep] = field(default_factory=list)
     stop_reason: str = ""
 
@@ -118,16 +135,16 @@ class Explorer:
         result: WalkResult,
         action_history: list[str],
         *,
-        seed_id: str,
+        walk_id: str,
         step: int,
         raw_text: str = "",
     ) -> str:
         """Render the view, describe the scene, and record the describe step."""
         desc_obs, _ = self.observation_builder.build_describe(robot.camera())
         description = self.vlm.describe(desc_obs)
-        _log.info("Scene description (seed=%s step=%d): %s", seed_id, step, description)
+        _log.info("Scene description (walk=%s step=%d): %s", walk_id, step, description)
         if self.event_sink is not None:
-            self.event_sink(SceneDescribeEvent(seed_id=seed_id, step=step, description=description))
+            self.event_sink(SceneDescribeEvent(walk_id=walk_id, step=step, description=description))
         action_history.append(Action.DESCRIBE.value)
         result.steps.append(
             WalkStep(
@@ -141,7 +158,7 @@ class Explorer:
         return description
 
     def run_walk(
-        self, seed_pose: Pose, coverage: CoverageState, *, seed_id: str = ""
+        self, seed_pose: Pose, coverage: CoverageState, *, walk_id: str = ""
     ) -> WalkResult:
         self.vlm.reset()
         robot = Robot(scene=self.scene, pose=seed_pose)
@@ -152,8 +169,8 @@ class Explorer:
 
         trail: list[Pose] = [seed_pose]
         novelty_seed = coverage.novelty(seed_pose)
-        coverage.add_pose(seed_pose, seed_id=seed_id)
-        result = WalkResult(seed_id=seed_id)
+        coverage.add_pose(seed_pose, walk_id=walk_id)
+        result = WalkResult(walk_id=walk_id)
         result.steps.append(
             WalkStep(pose=seed_pose, action=Action.STOP, novelty=novelty_seed, degenerate=False)
         )
@@ -163,7 +180,7 @@ class Explorer:
         for step_idx in range(self.max_steps):
             if step_idx == 0:
                 scene_description = self._describe_step(
-                    robot, result, action_history, seed_id=seed_id, step=1
+                    robot, result, action_history, walk_id=walk_id, step=1
                 )
                 continue
 
@@ -187,7 +204,7 @@ class Explorer:
                     robot,
                     result,
                     action_history,
-                    seed_id=seed_id,
+                    walk_id=walk_id,
                     step=step_idx + 1,
                     raw_text=decision.raw_text,
                 )
@@ -228,11 +245,11 @@ class Explorer:
             if action is not Action.STOP and not degenerate and not blocked:
                 robot.move(next_pose)
                 conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
-                coverage.add_pose(next_pose, seed_id=seed_id, confidence=conf)
+                coverage.add_pose(next_pose, walk_id=walk_id, confidence=conf)
                 trail.append(next_pose)
 
             self._emit_step(
-                seed_id,
+                walk_id,
                 step_idx + 1,
                 observation,
                 decision,
@@ -253,7 +270,7 @@ class Explorer:
         result.stop_reason = stop_reason
         if self.event_sink is not None:
             self.event_sink(
-                WalkEndEvent(seed_id=seed_id, reason=stop_reason, steps=len(result.steps))
+                WalkEndEvent(walk_id=walk_id, reason=stop_reason, steps=len(result.steps))
             )
         return result
 
@@ -263,14 +280,23 @@ class Explorer:
             return False
         return capped_forward_step(self.action_space.step, clearance) <= 1e-6
 
-    def run_session(self, seed_poses: list[Pose], coverage: CoverageState) -> list[WalkResult]:
+    def run_session(
+        self,
+        seeds: list[SeedPose],
+        coverage: CoverageState,
+        *,
+        requested_seeds: int | None = None,
+    ) -> list[WalkResult]:
         """Launch a walk per seed into the shared ``coverage`` until session stop.
 
-        Session policies are evaluated **after** each walk against the coverage
-        that walk produced — so the gain attributed to walk *i* is genuinely
-        walk *i*'s, the final walk is also subject to the policies, and the
-        recorded ``reason`` names the policy that fired (or ``seeds_exhausted``
-        when the seed list runs out).
+        Each :class:`SeedPose` carries its provenance (``kind``); walks are
+        identified by ``walk{i}`` (a walk id, not a seed). Session policies are
+        evaluated **after** each walk against the coverage that walk produced —
+        so the gain attributed to walk *i* is genuinely walk *i*'s, the final
+        walk is also subject to the policies, and the recorded ``reason`` names
+        the policy that fired (or ``seeds_exhausted`` when the seeds run out).
+        ``requested_seeds`` is how many were asked for (defaults to the number
+        actually launched) so the UI can report rejections.
         """
         if self.event_sink is not None:
             self.event_sink(
@@ -278,23 +304,25 @@ class Explorer:
                     bounds_min=coverage.bounds_min,
                     bounds_max=coverage.bounds_max,
                     up_axis=coverage.up_axis,
-                    total_seeds=len(seed_poses),
-                    seed_floor=_floor_array(seed_poses, coverage.up_axis),
+                    total_seeds=len(seeds),
+                    seed_floor=_floor_array([s.pose for s in seeds], coverage.up_axis),
+                    seed_kinds=[s.kind for s in seeds],
+                    requested_seeds=len(seeds) if requested_seeds is None else requested_seeds,
                 )
             )
 
         results: list[WalkResult] = []
         prev_cov = floor_coverage(coverage, radius=self.coverage_radius)
         reason = "seeds_exhausted"
-        for i, seed in enumerate(seed_poses):
-            results.append(self.run_walk(seed, coverage, seed_id=f"seed{i}"))
+        for i, seed in enumerate(seeds):
+            results.append(self.run_walk(seed.pose, coverage, walk_id=f"walk{i}"))
             cur_cov = floor_coverage(coverage, radius=self.coverage_radius)
             gain = cur_cov - prev_cov
             prev_cov = cur_cov
             ctx = SessionContext(
                 state=coverage,
                 walks_completed=i + 1,
-                total_seeds=len(seed_poses),
+                total_seeds=len(seeds),
                 last_batch_coverage_gain=gain,
             )
             fired = session_stop_reason(self.session_policies, ctx)
@@ -315,7 +343,7 @@ class Explorer:
 
     def _emit_step(
         self,
-        seed_id: str,
+        walk_id: str,
         step: int,
         observation: Observation,
         decision: Decision,
@@ -334,7 +362,7 @@ class Explorer:
         cov_ps = pose_space_coverage(coverage, radius=self.coverage_radius)
         self.event_sink(
             StepEvent(
-                seed_id=seed_id,
+                walk_id=walk_id,
                 step=step,
                 budget=self.max_steps,
                 observation=observation,

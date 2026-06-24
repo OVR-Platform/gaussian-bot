@@ -12,7 +12,7 @@ import numpy as np
 from gaussian_robot.events import SessionEndEvent, SessionStartEvent, WalkEndEvent
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import Action, ActionSpace
-from gaussian_robot.nav.explorer import Explorer
+from gaussian_robot.nav.explorer import Explorer, SeedPose
 from gaussian_robot.nav.observation import ObservationBuilder
 from gaussian_robot.nav.stop import (
     CoveragePlateau,
@@ -103,8 +103,8 @@ def _state() -> CoverageState:
 
 def test_walk_runs_to_budget_without_policies() -> None:
     explorer = _explorer([Action.FORWARD], max_steps=4)
-    result = explorer.run_walk(Pose(), _state(), seed_id="s0")
-    assert result.seed_id == "s0"
+    result = explorer.run_walk(Pose(), _state(), walk_id="s0")
+    assert result.walk_id == "s0"
     assert len(result.steps) == 5  # seed step + 4 loop steps (describe + 3 forward)
     assert result.steps[1].action is Action.DESCRIBE
     assert all(s.action is Action.FORWARD for s in result.steps[2:])
@@ -113,7 +113,7 @@ def test_walk_runs_to_budget_without_policies() -> None:
 def test_walk_plateau_stops_early() -> None:
     plateau = CoveragePlateau(novelty_delta=0.5, window=3)
     explorer = _explorer([Action.STOP], walk_policies=[plateau], max_steps=50)
-    result = explorer.run_walk(Pose(), _state(), seed_id="s0")
+    result = explorer.run_walk(Pose(), _state(), walk_id="s0")
     assert len(result.steps) < 50  # stopped early via plateau
     assert plateau.should_stop()
 
@@ -121,7 +121,7 @@ def test_walk_plateau_stops_early() -> None:
 def test_walk_forward_accumulates_coverage() -> None:
     explorer = _explorer([Action.FORWARD], max_steps=3)
     state = _state()
-    explorer.run_walk(Pose(), state, seed_id="s0")
+    explorer.run_walk(Pose(), state, walk_id="s0")
     assert len(state) == 3  # seed + 2 forward (step 0 is describe)
 
 
@@ -131,7 +131,10 @@ def test_session_runs_all_seeds_until_exhaustion() -> None:
         session_policies=[SeedExhaustion()],
         max_steps=2,
     )
-    seeds = [Pose(position=np.array([1.0, 0.0, 1.0])), Pose(position=np.array([8.0, 0.0, 8.0]))]
+    seeds = [
+        SeedPose(pose=Pose(position=np.array([1.0, 0.0, 1.0]))),
+        SeedPose(pose=Pose(position=np.array([8.0, 0.0, 8.0]))),
+    ]
     results = explorer.run_session(seeds, _state())
     assert len(results) == 2
 
@@ -142,7 +145,7 @@ def test_session_stops_on_pose_budget() -> None:
         session_policies=[PoseBudget(max_poses=3)],
         max_steps=2,
     )
-    seeds = [Pose(position=np.zeros(3)) for _ in range(5)]
+    seeds = [SeedPose(pose=Pose(position=np.zeros(3))) for _ in range(5)]
     results = explorer.run_session(seeds, _state())
     assert len(results) <= 5
 
@@ -153,7 +156,9 @@ def test_session_coverage_target_stops() -> None:
         session_policies=[CoverageTarget(radius=1.0, tau=0.99)],
         max_steps=2,
     )
-    seeds = [Pose(position=np.array([x, 0.0, z])) for x in (1.0, 8.0) for z in (1.0, 8.0)]
+    seeds = [
+        SeedPose(pose=Pose(position=np.array([x, 0.0, z]))) for x in (1.0, 8.0) for z in (1.0, 8.0)
+    ]
     results = explorer.run_session(seeds, _state())
     assert len(results) >= 1
 
@@ -177,7 +182,7 @@ def test_observation_map_is_not_blank_when_sampled() -> None:
 
 def test_walk_records_stop_reason_step_budget() -> None:
     explorer = _explorer([Action.FORWARD], max_steps=4)
-    result = explorer.run_walk(Pose(), _state(), seed_id="s0")
+    result = explorer.run_walk(Pose(), _state(), walk_id="s0")
     assert result.stop_reason == "step_budget"  # no policy fired; loop exhausted
 
 
@@ -186,19 +191,19 @@ def test_walk_records_plateau_reason_and_emits_walk_end() -> None:
     plateau = CoveragePlateau(novelty_delta=0.5, window=2)
     explorer = _explorer([Action.STOP], walk_policies=[plateau], max_steps=50)
     explorer.event_sink = events.append
-    result = explorer.run_walk(Pose(), _state(), seed_id="s0")
+    result = explorer.run_walk(Pose(), _state(), walk_id="s0")
     assert result.stop_reason == "coverage_plateau"
     walk_ends = [e for e in events if isinstance(e, WalkEndEvent)]
     assert len(walk_ends) == 1
     assert walk_ends[0].reason == "coverage_plateau"
-    assert walk_ends[0].seed_id == "s0"
+    assert walk_ends[0].walk_id == "s0"
 
 
 def test_blocked_forward_does_not_accumulate_coverage() -> None:
     # depth 0.3 < margin (0.5 * step 1.0) -> every forward is blocked, nothing commits.
     explorer = _explorer([Action.FORWARD], max_steps=5, depth_value=0.3)
     state = _state()
-    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), state, seed_id="s0")
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), state, walk_id="s0")
     assert len(state) == 1  # only the seed pose; no forward step committed
     assert all(s.blocked for s in result.steps if s.action is Action.FORWARD)
 
@@ -207,12 +212,17 @@ def test_session_end_reason_is_specific() -> None:
     events: list[object] = []
     explorer = _explorer([Action.FORWARD], session_policies=[SeedExhaustion()], max_steps=2)
     explorer.event_sink = events.append
-    seeds = [Pose(position=np.array([1.0, 0.0, 1.0])), Pose(position=np.array([8.0, 0.0, 8.0]))]
-    explorer.run_session(seeds, _state())
+    seeds = [
+        SeedPose(pose=Pose(position=np.array([1.0, 0.0, 1.0])), kind="capture"),
+        SeedPose(pose=Pose(position=np.array([8.0, 0.0, 8.0])), kind="origin_fallback"),
+    ]
+    explorer.run_session(seeds, _state(), requested_seeds=4)
     end = next(e for e in events if isinstance(e, SessionEndEvent))
     assert end.reason == "seeds_exhausted"
     start = next(e for e in events if isinstance(e, SessionStartEvent))
     assert start.seed_floor.shape == (2, 2)  # both seeds' floor positions surfaced
+    assert start.seed_kinds == ["capture", "origin_fallback"]  # provenance surfaced
+    assert start.total_seeds == 2 and start.requested_seeds == 4  # rejections visible
 
 
 def test_render_is_runtime_checkable() -> None:

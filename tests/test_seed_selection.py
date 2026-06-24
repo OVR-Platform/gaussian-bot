@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import numpy as np
 
+from gaussian_robot.nav.explorer import SeedPose
 from gaussian_robot.render.base import RenderResult
 from gaussian_robot.render.camera import Camera, Pose
-from gaussian_robot.session import _select_seeds, _sharpness
+from gaussian_robot.session import _sharpness, validate_seed_poses
 
 
 def _flat(n: int = 16) -> np.ndarray:
@@ -35,15 +36,18 @@ def test_sharpness_separates_flat_from_textured() -> None:
     assert _sharpness(_textured()) > _sharpness(_flat())
 
 
-def test_select_seeds_skips_blurry_real_views() -> None:
+def test_validate_seed_poses_skips_blurry_real_views() -> None:
     # Two blurry (x<0) and two sharp (x>=0) capture-like candidates. Non-strict
-    # selection must drop the blurry ones below the sharpness floor.
+    # selection must drop the blurry ones below the sharpness floor, keeping kind.
     candidates = [
-        Pose(position=np.array([-1.0, 0.0, 0.0])),
-        Pose(position=np.array([-2.0, 0.0, 0.0])),
-        Pose(position=np.array([1.0, 0.0, 0.0])),
-        Pose(position=np.array([2.0, 0.0, 0.0])),
+        SeedPose(pose=Pose(position=np.array([-1.0, 0.0, 0.0])), kind="capture"),
+        SeedPose(pose=Pose(position=np.array([-2.0, 0.0, 0.0])), kind="capture"),
+        SeedPose(pose=Pose(position=np.array([1.0, 0.0, 0.0])), kind="capture"),
+        SeedPose(pose=Pose(position=np.array([2.0, 0.0, 0.0])), kind="capture"),
     ]
-    seeds = _select_seeds(_SharpnessRenderer(), candidates, num_seeds=2, step=1.0, strict=False)
+    seeds = validate_seed_poses(
+        _SharpnessRenderer(), candidates, num_seeds=2, step=1.0, strict=False
+    )
     assert len(seeds) == 2
-    assert all(s.position[0] >= 0 for s in seeds)  # only the sharp views seed
+    assert all(s.pose.position[0] >= 0 for s in seeds)  # only the sharp views seed
+    assert all(s.kind == "capture" for s in seeds)

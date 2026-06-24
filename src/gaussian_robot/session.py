@@ -3,6 +3,22 @@
 This is the single wiring point: it selects backends from the config (demo
 fakes now; a real Qwen vLLM client when enabled; a real gsplat renderer when it
 lands), builds the :class:`Explorer`, and spreads seed poses inside the scene.
+
+Seed lifecycle (the source of truth for "where do walks start?"):
+
+    capture poses / density grid / floor grid
+        │  generate_seed_candidates()  -> list[SeedPose] (tagged with `kind`)
+        ▼
+    candidate SeedPoses (spread + origin-facing fallbacks)
+        │  validate_seed_poses()       -> drops void/blurry views, keeps `kind`
+        ▼
+    seed poses  ──run_session()──▶  one Walk each (walk_id "walk{i}")
+                                     into a shared CoverageState
+
+A *seed* is the pose a walk starts from; a *walk* is the episode and is
+identified by ``walk_id`` (not "seed_id"). ``SeedPose.kind`` records provenance
+("capture" = a real reconstruction camera; otherwise a synthesised guess) so the
+UI can show whether a walk started from a real viewpoint or a fallback.
 """
 
 from __future__ import annotations
@@ -17,7 +33,7 @@ from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
 from gaussian_robot.config import RunConfig
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import ActionSpace
-from gaussian_robot.nav.explorer import Explorer
+from gaussian_robot.nav.explorer import Explorer, SeedPose
 from gaussian_robot.nav.observation import ObservationBuilder
 from gaussian_robot.nav.stop import (
     BoundsGuard,
@@ -36,6 +52,10 @@ from gaussian_robot.splat.scene import SceneBounds, SplatScene
 from gaussian_robot.vlm.client import VLMClient
 
 _FLOOR_PLANE = {0: (1, 2), 1: (0, 2), 2: (0, 1)}
+
+# Fixed RNG seed for reproducible density-weighted candidate sampling. This is a
+# numpy PRNG seed — unrelated to the SeedPoses that walks start from.
+_RNG_SEED = 42
 
 
 def _floor_axes(up_axis: str) -> tuple[int, int]:
@@ -335,7 +355,7 @@ def _positions_from_density(
 
     a, b = _floor_axes(up_axis)
 
-    rng = np.random.default_rng(seed=42)
+    rng = np.random.default_rng(_RNG_SEED)
     indices = rng.choice(len(probs), size=n, replace=True, p=probs)
     positions: list[np.ndarray] = []
     for idx in indices:
@@ -345,7 +365,7 @@ def _positions_from_density(
         pos = np.zeros(3)
         pos[a] = xa
         pos[b] = xb
-        # Height is filled in by generate_seeds using the validated origin height.
+        # Height is filled in by generate_seed_candidates using the validated origin height.
         positions.append(pos)
     return positions
 
@@ -370,7 +390,26 @@ def _spread_capture_poses(poses: list[Pose], up_axis: str, n: int) -> list[Pose]
     return [poses[i] for i in idx]
 
 
-def generate_seeds(
+def _origin_fallback_seeds(
+    safe_origin: np.ndarray, a: int, b: int, ua: str, n: int
+) -> list[SeedPose]:
+    """Synthesised seeds at the validated origin facing out in ``n`` directions."""
+    out: list[SeedPose] = []
+    for i in range(n):
+        angle = 2.0 * math.pi * i / n
+        target = safe_origin.copy()
+        target[a] += math.cos(angle)
+        target[b] += math.sin(angle)
+        out.append(
+            SeedPose(
+                pose=Pose(position=safe_origin.copy(), rotation=look_at(safe_origin, target, ua)),
+                kind="origin_fallback",
+            )
+        )
+    return out
+
+
+def generate_seed_candidates(
     config: RunConfig,
     bounds_min: np.ndarray | None = None,
     bounds_max: np.ndarray | None = None,
@@ -378,19 +417,19 @@ def generate_seeds(
     renderer: Renderer | None = None,
     capture_poses: list[Pose] | None = None,
     up_axis: str | None = None,
-) -> list[Pose]:
-    """Generate seed pose candidates spread across the scene floor.
+) -> list[SeedPose]:
+    """Generate candidate :class:`SeedPose`\\ s spread across the scene floor.
 
-    When ``capture_poses`` (the camera poses the splat was reconstructed from)
-    are available, they are used as the candidate pool: every one is a known-good
-    viewpoint that looks at real geometry, so seeds never land in empty space.
-    They are spread across the floor via farthest-point selection and keep their
-    original orientation.
+    Each candidate is tagged with its provenance (``SeedPose.kind``):
 
-    Otherwise, when a renderer with a density grid is available, seeds are sampled
-    from reconstructed regions; failing that, seeds are placed on a regular floor
-    grid. A set of candidates from the known-good ``origin`` (facing different
-    directions) is always appended as a fallback.
+    - ``capture`` — when ``capture_poses`` (the cameras the splat was
+      reconstructed from) are available, they are the candidate pool: every one
+      is a known-good viewpoint, spread via farthest-point selection, keeping its
+      original orientation.
+    - ``density`` / ``grid`` — otherwise candidates are sampled from the
+      reconstructed-density grid, or failing that placed on a regular floor grid.
+    - ``origin_fallback`` — a ring of origin-facing candidates is always appended
+      so validation still has options if the preferred candidates render poorly.
     """
     ua = up_axis if up_axis is not None else config.up_axis
     if ua == "auto":  # defensive: callers normally pass an already-resolved axis
@@ -407,53 +446,42 @@ def generate_seeds(
     # Over-sample candidates: after the sharpness floor drops the blurriest ~half,
     # enough well-spread real views remain to pick num_seeds sharp ones from.
     n_candidates = max(config.num_seeds * 6, 24)
+    n_origin = max(config.num_seeds, 4)
 
     if capture_poses:
-        candidates: list[Pose] = _spread_capture_poses(capture_poses, ua, n_candidates)
-        # Append origin-facing fallbacks so validation still has options if a
-        # capture pose renders poorly (e.g. a floater-only view).
-        n_origin = max(config.num_seeds, 4)
-        for i in range(n_origin):
-            angle = 2.0 * math.pi * i / n_origin
-            target = safe_origin.copy()
-            target[a] += math.cos(angle)
-            target[b] += math.sin(angle)
-            candidates.append(
-                Pose(
-                    position=safe_origin.copy(),
-                    rotation=look_at(safe_origin, target, ua),
-                )
-            )
+        candidates = [
+            SeedPose(pose=p, kind="capture")
+            for p in _spread_capture_poses(capture_poses, ua, n_candidates)
+        ]
+        candidates += _origin_fallback_seeds(safe_origin, a, b, ua, n_origin)
         return candidates
+
+    frontier_kind = "density"
     frontier: list[np.ndarray] | None = None
     if renderer is not None:
         frontier = _positions_from_density(renderer, ua, n_candidates)
     if frontier is None:
         frontier = _floor_seed_positions(bmin, bmax, ua, n_candidates, height=good_height)
+        frontier_kind = "grid"
 
     # Stamp the validated height onto density-sampled positions (they have height=0).
     for pos in frontier:
         pos[up_idx] = good_height
 
     candidates = []
-    for pos in frontier:
-        angle = 2.0 * math.pi * len(candidates) / max(n_candidates, 1)
+    for j, pos in enumerate(frontier):
+        angle = 2.0 * math.pi * j / max(n_candidates, 1)
         target = pos.copy()
         target[a] += math.cos(angle)
         target[b] += math.sin(angle)
-        candidates.append(Pose(position=pos.copy(), rotation=look_at(pos, target, ua)))
-
-    # Always include origin-facing candidates as a fallback seed pool
-    n_origin = max(config.num_seeds, 4)
-    for i in range(n_origin):
-        angle = 2.0 * math.pi * i / n_origin
-        target = safe_origin.copy()
-        target[a] += math.cos(angle)
-        target[b] += math.sin(angle)
         candidates.append(
-            Pose(position=safe_origin.copy(), rotation=look_at(safe_origin, target, ua))
+            SeedPose(
+                pose=Pose(position=pos.copy(), rotation=look_at(pos, target, ua)),
+                kind=frontier_kind,
+            )
         )
 
+    candidates += _origin_fallback_seeds(safe_origin, a, b, ua, n_origin)
     return candidates
 
 
@@ -470,15 +498,15 @@ def _sharpness(rgb: np.ndarray) -> float:
     return float((gx * gx).mean() + (gy * gy).mean())
 
 
-def _select_seeds(
+def validate_seed_poses(
     renderer: Renderer,
-    candidates: list[Pose],
+    candidates: list[SeedPose],
     *,
     num_seeds: int,
     step: float,
     strict: bool,
-) -> list[Pose]:
-    """Keep the best valid ``num_seeds`` candidates.
+) -> list[SeedPose]:
+    """Keep the best valid ``num_seeds`` candidates (preserving their ``kind``).
 
     A candidate is rejected when it looks into the void (mostly-infinite depth or
     near-zero alpha). When ``strict`` (guessed density/grid seeds), candidates are
@@ -495,9 +523,9 @@ def _select_seeds(
     intrinsics = _PREVIEW_INTRINSICS
 
     # Render every candidate once and cache its metrics (avoids double-rendering).
-    scored: list[tuple[Pose, float, float, float, float]] = []
+    scored: list[tuple[SeedPose, float, float, float, float]] = []
     for s in candidates:
-        r = renderer.render(Camera(pose=s, intrinsics=intrinsics))
+        r = renderer.render(Camera(pose=s.pose, intrinsics=intrinsics))
         if r.depth is None:
             scored.append((s, 0.0, 0.0, 0.0, 0.0))
             continue
@@ -517,7 +545,7 @@ def _select_seeds(
         valid_sharps = [sh for (_, ff, _, a, sh) in scored if ff >= 0.5 and a >= 0.15]
         sharp_floor = float(np.median(valid_sharps)) if valid_sharps else 0.0
 
-    seeds: list[Pose] = []
+    seeds: list[SeedPose] = []
     for s, finite_frac, median_depth, alpha_mean, sharp in ordered:
         if len(seeds) >= num_seeds:
             break
@@ -551,7 +579,7 @@ def build_vlm(config: RunConfig) -> VLMClient:
     return ScriptedDemoVLM()
 
 
-def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageState]:
+def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], CoverageState]:
     """Construct an :class:`Explorer`, seeds and a fresh coverage state from config.
 
     The renderer is always the demo fake for now (gsplat is not yet wired); the
@@ -627,7 +655,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
     seed_origin = _best_origin(renderer, up_axis, bmin, bmax)
 
     seed_pool = capture_poses if config.use_capture_pose_seeds else []
-    candidates = generate_seeds(
+    candidates = generate_seed_candidates(
         config,
         bmin,
         bmax,
@@ -637,8 +665,8 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         up_axis=up_axis,
     )
     # Capture poses are known-good viewpoints, so validation can be lenient (see
-    # _select_seeds); guessed density/grid candidates need the strict checks.
-    seeds = _select_seeds(
+    # validate_seed_poses); guessed density/grid candidates need the strict checks.
+    seeds = validate_seed_poses(
         renderer, candidates, num_seeds=config.num_seeds, step=space.step, strict=not seed_pool
     )
 

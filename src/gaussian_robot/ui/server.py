@@ -140,7 +140,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             explorer.event_sink = emit
             if step_mode:
                 _step_gate.set()
-            explorer.run_session(seeds, coverage)
+            explorer.run_session(seeds, coverage, requested_seeds=config.num_seeds)
         except BrokenPipeError:
             return
         except Exception as exc:  # noqa: BLE001
