@@ -44,8 +44,6 @@ def test_select_seeds_skips_blurry_real_views() -> None:
         Pose(position=np.array([1.0, 0.0, 0.0])),
         Pose(position=np.array([2.0, 0.0, 0.0])),
     ]
-    seeds = _select_seeds(
-        _SharpnessRenderer(), candidates, num_seeds=2, step=1.0, strict=False
-    )
+    seeds = _select_seeds(_SharpnessRenderer(), candidates, num_seeds=2, step=1.0, strict=False)
     assert len(seeds) == 2
     assert all(s.position[0] >= 0 for s in seeds)  # only the sharp views seed
