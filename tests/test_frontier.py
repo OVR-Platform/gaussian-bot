@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
+import types
+
 import numpy as np
 
-from gaussian_robot.nav.observation import _rotation_streak, frontier_mask
+from gaussian_robot.nav.observation import (
+    _rotation_streak,
+    frontier_floor_positions,
+    frontier_mask,
+)
 
 
 def test_frontier_is_empty_cell_adjacent_to_observed() -> None:
@@ -22,6 +28,22 @@ def test_frontier_is_empty_cell_adjacent_to_observed() -> None:
 def test_no_frontier_when_uniform() -> None:
     assert not frontier_mask(np.ones((4, 4))).any()  # all observed, nothing empty
     assert not frontier_mask(np.zeros((4, 4))).any()  # all empty, nothing observed
+
+
+def test_frontier_floor_positions_maps_cells_into_bounds() -> None:
+    grid = np.zeros((4, 4))
+    grid[1, 1] = 1.0  # one observed cell -> its empty neighbours are frontiers
+    cloud = types.SimpleNamespace(
+        density_grid=grid, density_bounds=(np.zeros(3), np.array([4.0, 4.0, 4.0]))
+    )
+    renderer = types.SimpleNamespace(cloud=cloud)
+    pts = frontier_floor_positions(renderer)
+    assert pts.shape[1] == 2 and pts.shape[0] >= 1
+    assert (pts >= 0).all() and (pts <= 4).all()  # all map inside the density bounds
+
+
+def test_frontier_floor_positions_empty_without_cloud() -> None:
+    assert frontier_floor_positions(types.SimpleNamespace()).shape == (0, 2)
 
 
 def test_rotation_streak_counts_trailing_turns() -> None:

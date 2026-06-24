@@ -79,6 +79,28 @@ def frontier_mask(
     return (density_grid <= empty_max) & adj
 
 
+def frontier_floor_positions(renderer: Renderer) -> np.ndarray:
+    """World floor ``(K, 2)`` centres of every reconstruction frontier cell.
+
+    Computed from the renderer's (static) density grid; empty ``(0, 2)`` when the
+    renderer has no density grid or the scene has no frontiers.
+    """
+    cloud = getattr(renderer, "cloud", None)
+    grid = getattr(cloud, "density_grid", None)
+    db = getattr(cloud, "density_bounds", None)
+    if grid is None or db is None:
+        return np.empty((0, 2), dtype=np.float64)
+    mask = frontier_mask(grid)
+    if not mask.any():
+        return np.empty((0, 2), dtype=np.float64)
+    lo, hi = db
+    g = grid.shape[0]
+    ix, iz = np.nonzero(mask)  # grid axes [x_bin, z_bin]
+    gx = lo[0] + (ix + 0.5) / g * (hi[0] - lo[0])
+    gz = lo[2] + (iz + 0.5) / g * (hi[2] - lo[2])
+    return np.stack([gx, gz], axis=1).astype(np.float64)
+
+
 def depth_to_uint8(depth: np.ndarray | None) -> np.ndarray:
     """Colormap a depth map to ``(H, W, 3)`` uint8 (near = bright).
 
@@ -314,22 +336,16 @@ class ObservationBuilder:
 
     def _nearest_gap(self, cur_floor: np.ndarray) -> np.ndarray | None:
         """World floor ``(x, z)`` of the nearest reconstruction frontier, or None."""
-        cloud = getattr(self.renderer, "cloud", None)
-        grid = getattr(cloud, "density_grid", None)
-        db = getattr(cloud, "density_bounds", None)
-        if grid is None or db is None:
+        pts = frontier_floor_positions(self.renderer)
+        if pts.shape[0] == 0:
             return None
-        mask = frontier_mask(grid)
-        if not mask.any():
-            return None
-        lo, hi = db
-        g = grid.shape[0]
-        ix, iz = np.nonzero(mask)  # axes [x_bin, z_bin]
-        gx = lo[0] + (ix + 0.5) / g * (hi[0] - lo[0])
-        gz = lo[2] + (iz + 0.5) / g * (hi[2] - lo[2])
-        pts = np.stack([gx, gz], axis=1)
         d2 = ((pts - cur_floor) ** 2).sum(axis=1)
         return np.asarray(pts[int(np.argmin(d2))], dtype=np.float64)
+
+    def nearest_gap(self, pose: Pose) -> tuple[float, float] | None:
+        """(distance, signed bearing°) to the nearest frontier from ``pose``, or None."""
+        cur = floor_xy(pose.position, self.up_axis)[0]
+        return self._gap_bearing(pose, cur, self._nearest_gap(cur))
 
     def _gap_bearing(
         self, pose: Pose, cur_floor: np.ndarray, gap_xy: np.ndarray | None

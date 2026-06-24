@@ -29,6 +29,7 @@ class SessionStartEvent:
     seed_floor: np.ndarray  # (S, 2) floor positions of the seeds walks start from
     seed_kinds: list[str]  # per-seed provenance: "capture" | "origin_fallback" | "density" | "grid"
     requested_seeds: int  # how many were asked for (may exceed total_seeds if some were rejected)
+    frontier_floor: np.ndarray  # (K, 2) reconstruction-frontier cells (static gaps to fill)
 
 
 @dataclass(frozen=True)
@@ -59,6 +60,7 @@ class MarkEvent:
     step: int
     floor: np.ndarray  # (2,) floor-plane position of the marked pose
     count: int  # total marks accumulated this session so far
+    auto: bool = False  # True if the system auto-marked (vs. an explicit VLM mark)
 
 
 @dataclass(frozen=True)

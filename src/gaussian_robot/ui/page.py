@@ -212,7 +212,7 @@ function setStatus(t){ document.getElementById("status").textContent = t; }
 function setChips(o){ document.getElementById("chips").innerHTML =
   Object.entries(o).map(([k,v])=>`<span class="chip"><b>${k}</b> ${v}</span>`).join(""); }
 
-let SEEDS = [], SEED_KINDS = [], MARKS = [], LAST_STEP = null;
+let SEEDS = [], SEED_KINDS = [], MARKS = [], FRONTIERS = [], LAST_STEP = null;
 const seedColor = kind => (kind === "capture" ? "#f5be28" : "#e0662a");  // amber=real, orange=synthetic
 const walkIndex = wid => { const n = String(wid).match(/\\d+/); return n ? parseInt(n[0], 10) : -1; };
 const walkKind = wid => SEED_KINDS[walkIndex(wid)] || "?";
@@ -226,6 +226,9 @@ function drawWorld(ctx, sampled, trail, pose){
   ctx.fillStyle="#181818"; ctx.fillRect(0,0,W,H);
   ctx.strokeStyle="#666"; ctx.lineWidth=1;
   ctx.strokeRect(tx(lo[0]),ty(hi[1]),tx(hi[0])-tx(lo[0]),ty(lo[1])-ty(hi[1]));
+  // reconstruction frontiers (static gaps to fill): faint cyan squares, drawn underneath
+  ctx.fillStyle="rgba(80,200,210,0.45)";
+  (FRONTIERS||[]).forEach(p=>{ ctx.fillRect(tx(p[0])-1.5, ty(p[1])-1.5, 3, 3); });
   ctx.fillStyle="#285ad0";
   (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[0]),ty(p[1]),2,0,7); ctx.fill(); });
   // seeds: where walks start from. Amber ring = real capture pose, orange = synthetic fallback.
@@ -245,7 +248,7 @@ function drawWorld(ctx, sampled, trail, pose){
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
   // legend
   ctx.font="11px sans-serif"; ctx.textBaseline="middle";
-  const items=[["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"],["#c050ff","marked (fill-in)"]];
+  const items=[["#50c8d2","gap (frontier)"],["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"],["#c050ff","marked (fill-in)"]];
   items.forEach(([c,t],i)=>{ const y=14+i*16; ctx.fillStyle=c;
     ctx.beginPath(); ctx.arc(14,y,4,0,7); ctx.fill(); ctx.fillStyle="#bbb"; ctx.fillText(t,24,y); });
   // world axis labels: horizontal = +floor axis a, vertical = +floor axis b (up axis is out of plane)
@@ -309,6 +312,7 @@ async function run(endpoint){
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
       SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || []; MARKS = []; LAST_STEP = null;
+      FRONTIERS = m.frontiers || [];
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
       resetMovies();
@@ -323,10 +327,11 @@ async function run(endpoint){
     if(m.type==="mark"){
       MARKS.push(m.floor);
       const tgt = num(document.getElementById("pose_target").value, 30);
+      const how = m.auto ? "auto" : "vlm";
       const log = document.getElementById("action-log");
-      log.textContent += `★ ${m.walk_id} #${m.step}: marked fill-in pose (${m.count}/${tgt})\n`;
+      log.textContent += `★ ${m.walk_id} #${m.step}: marked fill-in pose [${how}] (${m.count}/${tgt})\n`;
       log.scrollTop = log.scrollHeight;
-      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, action:"mark", marks:`${m.count}/${tgt}`});
+      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, action:`mark:${how}`, marks:`${m.count}/${tgt}`});
       const ctx=document.getElementById("world-map").getContext("2d");
       if(LAST_STEP) drawWorld(ctx, LAST_STEP.sampled, LAST_STEP.trail, LAST_STEP.pose);
       else drawWorld(ctx, [], [], null);

@@ -33,7 +33,11 @@ from gaussian_robot.metrics.coverage import (
     pose_space_coverage,
 )
 from gaussian_robot.nav.action import Action, ActionSpace, apply_action, capped_forward_step
-from gaussian_robot.nav.observation import ObservationBuilder, wall_distance_from_depth
+from gaussian_robot.nav.observation import (
+    ObservationBuilder,
+    frontier_floor_positions,
+    wall_distance_from_depth,
+)
 from gaussian_robot.nav.robot import Robot
 from gaussian_robot.nav.stop import (
     SessionContext,
@@ -146,7 +150,9 @@ class Explorer:
     max_steps: int = 40
     event_sink: EventSink | None = None
     mark_target: int = 0  # informational target shown to the VLM in [state]
-    _marks_total: int = 0  # running count of VLM-marked fill-in poses this session
+    auto_mark: bool = True  # auto-mark a pose when well-positioned at a frontier
+    _marks_total: int = 0  # running count of marked fill-in poses this session
+    _mark_floor: list[np.ndarray] = field(default_factory=list)  # floor pos of marks (dedup)
 
     def _describe_step(
         self,
@@ -176,6 +182,21 @@ class Explorer:
         )
         return description
 
+    def _record_mark(
+        self, pose: Pose, result: WalkResult, *, walk_id: str, step: int, auto: bool
+    ) -> None:
+        """Add ``pose`` to the deliverable marks and emit a MarkEvent."""
+        self._marks_total += 1
+        result.marks.append(pose)
+        floor = floor_xy(pose.position, self.scene.up_axis)[0]
+        self._mark_floor.append(floor)
+        if self.event_sink is not None:
+            self.event_sink(
+                MarkEvent(
+                    walk_id=walk_id, step=step, floor=floor, count=self._marks_total, auto=auto
+                )
+            )
+
     def _mark_step(
         self,
         robot: Robot,
@@ -186,9 +207,7 @@ class Explorer:
         step: int,
         raw_text: str = "",
     ) -> None:
-        """Record the current viewpoint as a proposed fill-in pose (the deliverable)."""
-        self._marks_total += 1
-        result.marks.append(robot.pose)
+        """Explicit VLM mark: record it in history/steps, then add it to the deliverable."""
         action_history.append(Action.MARK.value)
         result.steps.append(
             WalkStep(
@@ -199,15 +218,28 @@ class Explorer:
                 raw_text=raw_text,
             )
         )
-        if self.event_sink is not None:
-            self.event_sink(
-                MarkEvent(
-                    walk_id=walk_id,
-                    step=step,
-                    floor=floor_xy(robot.pose.position, self.scene.up_axis)[0],
-                    count=self._marks_total,
-                )
-            )
+        self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=False)
+
+    def _maybe_auto_mark(
+        self, robot: Robot, result: WalkResult, *, walk_id: str, step: int
+    ) -> None:
+        """Auto-mark the current pose when it is close to and roughly facing a frontier.
+
+        Guarantees the deliverable gets populated from the frontier signal even when the
+        VLM never emits MARK. Dedupes against existing marks by the coverage radius.
+        """
+        if not self.auto_mark:
+            return
+        gap = self.observation_builder.nearest_gap(robot.pose)
+        if gap is None:
+            return
+        dist, bearing = gap
+        if dist > self.coverage_radius * 1.5 or abs(bearing) > 45.0:
+            return
+        floor = floor_xy(robot.pose.position, self.scene.up_axis)[0]
+        if any(float(np.linalg.norm(floor - m)) < self.coverage_radius for m in self._mark_floor):
+            return  # already marked a nearby fill-in pose
+        self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=True)
 
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, walk_id: str = ""
@@ -312,6 +344,7 @@ class Explorer:
                 conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
                 coverage.add_pose(next_pose, walk_id=walk_id, confidence=conf)
                 trail.append(next_pose)
+                self._maybe_auto_mark(robot, result, walk_id=walk_id, step=step_idx + 1)
 
             self._emit_step(
                 walk_id,
@@ -364,6 +397,7 @@ class Explorer:
         actually launched) so the UI can report rejections.
         """
         self._marks_total = 0
+        self._mark_floor = []
         if self.event_sink is not None:
             self.event_sink(
                 SessionStartEvent(
@@ -374,6 +408,7 @@ class Explorer:
                     seed_floor=_floor_array([s.pose for s in seeds], coverage.up_axis),
                     seed_kinds=[s.kind for s in seeds],
                     requested_seeds=len(seeds) if requested_seeds is None else requested_seeds,
+                    frontier_floor=frontier_floor_positions(self.renderer),
                 )
             )
 

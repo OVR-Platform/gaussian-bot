@@ -30,6 +30,7 @@ def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return
             "requested_seeds": event.requested_seeds,
             "seeds": event.seed_floor.tolist(),
             "seed_kinds": event.seed_kinds,
+            "frontiers": event.frontier_floor.tolist(),
         }
     if isinstance(event, StepEvent):
         panels = {label: jpeg_data_url(img) for label, img in event.observation.panels}
@@ -57,6 +58,7 @@ def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return
             "step": event.step,
             "floor": event.floor.tolist(),
             "count": event.count,
+            "auto": event.auto,
         }
     if isinstance(event, WalkEndEvent):
         return {

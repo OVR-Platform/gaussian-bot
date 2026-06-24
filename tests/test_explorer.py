@@ -12,8 +12,9 @@ import numpy as np
 from gaussian_robot.events import MarkEvent, SessionEndEvent, SessionStartEvent, WalkEndEvent
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import Action, ActionSpace
-from gaussian_robot.nav.explorer import Explorer, SeedPose
+from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
 from gaussian_robot.nav.observation import ObservationBuilder
+from gaussian_robot.nav.robot import Robot
 from gaussian_robot.nav.stop import (
     CoveragePlateau,
     CoverageTarget,
@@ -235,6 +236,30 @@ def test_mark_records_pose_and_emits_event_without_moving() -> None:
     marks = [e for e in events if isinstance(e, MarkEvent)]
     assert marks and marks[0].walk_id == "walk0" and marks[0].count == 1
     assert len(state) == 1  # mark neither moves the robot nor adds coverage
+
+
+def test_auto_mark_records_when_near_and_facing_a_frontier() -> None:
+    explorer = _explorer([Action.STOP])  # coverage_radius=1.0 -> proximity threshold 1.5
+    explorer.observation_builder.nearest_gap = lambda pose: (1.0, 20.0)  # type: ignore[method-assign]
+    events: list[object] = []
+    explorer.event_sink = events.append
+    result = WalkResult(walk_id="walk0")
+    robot = Robot(scene=_scene(), pose=Pose(position=np.array([5.0, 0.0, 5.0])))
+    explorer._maybe_auto_mark(robot, result, walk_id="walk0", step=3)
+    assert len(result.marks) == 1
+    auto = [e for e in events if isinstance(e, MarkEvent) and e.auto]
+    assert auto and auto[0].count == 1
+
+
+def test_auto_mark_skips_when_far_or_off_angle() -> None:
+    explorer = _explorer([Action.STOP])
+    result = WalkResult(walk_id="walk0")
+    robot = Robot(scene=_scene(), pose=Pose())
+    explorer.observation_builder.nearest_gap = lambda pose: (5.0, 10.0)  # type: ignore[method-assign]
+    explorer._maybe_auto_mark(robot, result, walk_id="walk0", step=1)  # too far
+    explorer.observation_builder.nearest_gap = lambda pose: (1.0, 80.0)  # type: ignore[method-assign]
+    explorer._maybe_auto_mark(robot, result, walk_id="walk0", step=1)  # facing away
+    assert not result.marks
 
 
 def test_render_is_runtime_checkable() -> None:
