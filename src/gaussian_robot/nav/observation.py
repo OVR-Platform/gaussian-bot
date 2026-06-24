@@ -136,10 +136,13 @@ class ObservationBuilder:
         "for new viewpoints to improve the reconstruction?"
     )
     prompt: str = (
-        "You are a robot inside a 3D Gaussian-Splat reconstruction. Your job is to TRAVEL TO "
-        "GAPS: under-sampled regions at the edge of the reconstruction (or pockets it missed) "
-        "where a new camera viewpoint could be captured to fill the scene in. You reposition so "
-        "those gaps can be observed — you do NOT just stare at whatever looks bad.\n"
+        "You are a robot inside a 3D Gaussian-Splat reconstruction. Your job is to find "
+        "under-reconstructed spots and MARK them: each MARK records your current viewpoint as a "
+        "proposed new camera view to fill the scene in. The marked poses ARE your deliverable — "
+        "you are collecting them toward a target shown in [state] as 'marks N/target'. Travel to "
+        "gaps (under-sampled regions you can reach), and whenever you arrive facing a blurry / "
+        "under-observed region, MARK before moving on. Keep moving and keep marking until you hit "
+        "the target; do NOT just wander or stare at things without marking.\n"
         "\n"
         "WHAT A GAP IS (and is NOT):\n"
         "- A gap is OPEN, reachable space that is under-observed — you can travel toward it.\n"
@@ -175,9 +178,11 @@ class ObservationBuilder:
         "4. Obstacle handling: if wall_distance is small or [depth] is mostly bright you face a "
         "surface — turn once or twice OR back up to find an open direction, then move. Don't keep "
         "turning in place.\n"
-        "5. MARK when you are positioned with a clear, head-on view of a gap that needs filling: "
-        "this records your current viewpoint as a proposed NEW VIEW for the reconstruction — the "
-        "actual deliverable. Mark once per distinct gap, after you've framed it well; then move on.\n"
+        "5. MARK often — it is your main output. Whenever you reach an under-reconstructed spot "
+        "(dark [confidence] holes, smeared ground/foliage, a gap you traveled to) and it fills "
+        "your view, emit MARK to record this viewpoint as a proposed new view. One mark per "
+        "distinct spot, then move on to the next. Watch 'marks N/target' in [state] and keep "
+        "marking until you reach the target.\n"
         "6. LOOK_UP / LOOK_DOWN to check ceilings/floors when entering a new area; DESCRIBE if "
         "disoriented.\n"
         "\n"
@@ -200,6 +205,8 @@ class ObservationBuilder:
         action_history: list[str] | None = None,
         coverage_pct: float = 0.0,
         scene_description: str = "",
+        marks: int = 0,
+        mark_target: int = 0,
     ) -> tuple[Observation, RenderResult]:
         """Render the view and assemble the observation.
 
@@ -222,7 +229,7 @@ class ObservationBuilder:
         map_panel = self._body_frame_map(coverage, camera.pose, trail, gap_xy=gap_xy)
         wall_distance = wall_distance_from_depth(result.depth)
         state_line = self._state_line(
-            camera.pose, step, budget, coverage_pct, wall_distance, gap_info
+            camera.pose, step, budget, coverage_pct, wall_distance, gap_info, marks, mark_target
         )
 
         parts = [self.prompt]
@@ -281,6 +288,8 @@ class ObservationBuilder:
         coverage_pct: float = 0.0,
         wall_distance: float | None = None,
         gap_info: tuple[float, float] | None = None,
+        marks: int = 0,
+        mark_target: int = 0,
     ) -> str:
         step_str = f"{step}/{budget}" if budget > 0 else str(step)
         parts = [
@@ -288,6 +297,8 @@ class ObservationBuilder:
             f"coverage {coverage_pct:.0%}",
             f"pose ({pose.position[0]:.2f},{pose.position[1]:.2f},{pose.position[2]:.2f})",
         ]
+        if mark_target > 0:
+            parts.append(f"marks {marks}/{mark_target}")
         if wall_distance is not None:
             parts.append(f"wall ahead {wall_distance:.2f}m")
         if gap_info is not None:

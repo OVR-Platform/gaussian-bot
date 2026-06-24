@@ -130,6 +130,7 @@ class Explorer:
     session_policies: list[SessionStopPolicy] = field(default_factory=list)
     max_steps: int = 40
     event_sink: EventSink | None = None
+    mark_target: int = 0  # informational target shown to the VLM in [state]
     _marks_total: int = 0  # running count of VLM-marked fill-in poses this session
 
     def _describe_step(
@@ -231,6 +232,8 @@ class Explorer:
                 action_history=action_history,
                 coverage_pct=cov,
                 scene_description=scene_description,
+                marks=self._marks_total,
+                mark_target=self.mark_target,
             )
             decision = self.vlm.act(observation)
             action = decision.action
