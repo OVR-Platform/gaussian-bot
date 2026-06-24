@@ -22,6 +22,8 @@ def test_action_verbs_match_adr() -> None:
         "move_down",
         "describe",
         "mark",
+        "grab",
+        "drop",
         "stop",
     }
 

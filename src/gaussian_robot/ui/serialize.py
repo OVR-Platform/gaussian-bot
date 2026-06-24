@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from gaussian_robot.events import (
+    CarryEvent,
     MarkEvent,
     SceneDescribeEvent,
     SessionEndEvent,
@@ -61,6 +62,15 @@ def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return
             "floor": event.floor.tolist(),
             "count": event.count,
             "auto": event.auto,
+        }
+    if isinstance(event, CarryEvent):
+        return {
+            "type": "carry",
+            "walk_id": event.walk_id,
+            "step": event.step,
+            "floor": event.floor.tolist(),
+            "kind": event.kind,
+            "carrying": event.carrying,
         }
     if isinstance(event, WalkEndEvent):
         return {

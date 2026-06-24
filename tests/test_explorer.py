@@ -10,7 +10,13 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from gaussian_robot.events import MarkEvent, SessionEndEvent, SessionStartEvent, WalkEndEvent
+from gaussian_robot.events import (
+    CarryEvent,
+    MarkEvent,
+    SessionEndEvent,
+    SessionStartEvent,
+    WalkEndEvent,
+)
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import Action, ActionSpace
 from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
@@ -23,6 +29,8 @@ from gaussian_robot.nav.stop import (
     SeedExhaustion,
     SessionStopPolicy,
     StopPolicy,
+    TaskComplete,
+    TaskStop,
 )
 from gaussian_robot.nav.terrain import build_height_field
 from gaussian_robot.render.base import Renderer, RenderResult
@@ -142,6 +150,49 @@ def test_session_runs_all_seeds_until_exhaustion() -> None:
     ]
     results = explorer.run_session(seeds, _state())
     assert len(results) == 2
+
+
+def _task_explorer(actions: list[Action], *, max_steps: int = 8) -> Explorer:
+    explorer = _explorer(actions, walk_policies=[TaskStop()], max_steps=max_steps)
+    explorer.mode = "task"
+    explorer.observation_builder.mode = "task"
+    explorer.observation_builder.task = "fetch the box and bring it to the door"
+    return explorer
+
+
+def test_task_grab_drop_toggles_carrying_and_emits_events() -> None:
+    events: list[object] = []
+    explorer = _task_explorer([Action.GRAB, Action.FORWARD, Action.DROP, Action.STOP])
+    explorer.event_sink = events.append
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), _state(), walk_id="walk0")
+    carries = [e for e in events if isinstance(e, CarryEvent)]
+    assert [c.kind for c in carries] == ["grab", "drop"]
+    assert carries[0].carrying is True and carries[1].carrying is False  # grab then release
+    assert result.stop_reason == "task_complete"  # STOP is authoritative in task mode
+    assert not explorer._carrying  # ended not carrying (dropped before stopping)
+
+
+def test_task_stop_is_immediate_unlike_densify() -> None:
+    # In task mode a single STOP ends the walk at once (TaskStop), not a demoted plateau vote.
+    explorer = _task_explorer([Action.STOP], max_steps=20)
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), _state(), walk_id="w")
+    assert result.stop_reason == "task_complete"
+    assert len(result.steps) <= 3  # seed + describe + the stop
+
+
+def test_task_mode_does_not_auto_mark() -> None:
+    explorer = _task_explorer([Action.FORWARD], max_steps=4)
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), _state(), walk_id="w")
+    assert result.marks == []  # densify auto-marking is off in task mode
+
+
+def test_task_complete_ends_session() -> None:
+    policy = TaskComplete()
+    from gaussian_robot.nav.stop import SessionContext  # noqa: PLC0415
+
+    state = _state()
+    assert policy.should_stop(SessionContext(state, 1, 1, last_walk_reason="task_complete"))
+    assert not policy.should_stop(SessionContext(state, 1, 1, last_walk_reason="stuck"))
 
 
 def test_session_stops_on_pose_budget() -> None:

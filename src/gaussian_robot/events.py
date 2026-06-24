@@ -70,6 +70,17 @@ class MarkEvent:
 
 
 @dataclass(frozen=True)
+class CarryEvent:
+    """Emitted in task mode when the VLM grabs or drops the carried target (simulated)."""
+
+    walk_id: str
+    step: int
+    floor: np.ndarray  # (2,) floor-plane position where the grab/drop happened
+    kind: str  # "grab" | "drop"
+    carrying: bool  # the resulting carried-state after this action
+
+
+@dataclass(frozen=True)
 class WalkEndEvent:
     """Emitted when one walk ends, carrying *why* it stopped."""
 
@@ -97,6 +108,12 @@ class SessionEndEvent:
 
 
 SessionEvent = (
-    SessionStartEvent | StepEvent | MarkEvent | WalkEndEvent | SceneDescribeEvent | SessionEndEvent
+    SessionStartEvent
+    | StepEvent
+    | MarkEvent
+    | CarryEvent
+    | WalkEndEvent
+    | SceneDescribeEvent
+    | SessionEndEvent
 )
 EventSink = Callable[[SessionEvent], None]

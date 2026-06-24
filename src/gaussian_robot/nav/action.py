@@ -28,6 +28,8 @@ class Action(StrEnum):
     MOVE_DOWN = "move_down"
     DESCRIBE = "describe"
     MARK = "mark"
+    GRAB = "grab"  # task mode: simulated pick-up of the target at the current pose (no motion)
+    DROP = "drop"  # task mode: simulated release of the carried target (no motion)
     STOP = "stop"
 
     @classmethod
@@ -145,8 +147,10 @@ def apply_action(
     the camera stops short of obstacles instead of penetrating geometry. It does
     not affect ``BACK`` (rear clearance is unknown).
     """
-    if action in (Action.STOP, Action.DESCRIBE, Action.MARK):
-        return pose  # MARK records the current viewpoint; it does not move the robot
+    if action in (Action.STOP, Action.DESCRIBE, Action.MARK, Action.GRAB, Action.DROP):
+        # MARK records the current viewpoint; GRAB/DROP are simulated manipulation that
+        # only toggles the carried-payload state. None of these move the robot.
+        return pose
 
     if action in (Action.FORWARD, Action.BACK):
         heading = pose.heading(up_axis)

@@ -19,6 +19,16 @@ DEFAULT_CONFIG_PATH = Path("data/ui_config.json")
 class RunConfig(BaseModel):
     """All inputs needed to build and run an exploration session."""
 
+    mode: str = Field(
+        default="densify",
+        description=(
+            "Mission mode. 'densify': explore to find under-reconstructed regions and "
+            "propose fill-in camera poses (coverage-driven). 'task': pursue the goal in "
+            "task_prompt (navigate to / find / fetch-and-carry), using grab/drop actions and "
+            "stopping when the VLM declares the task done. Both share the renderer, VLM, "
+            "controller and UI; only the prompt, stop criteria and deliverable differ."
+        ),
+    )
     ply_path: str | None = Field(default=None, description="Path to the .ply/.splat scene.")
     poses_path: str | None = Field(
         default=None,
@@ -149,6 +159,14 @@ class RunConfig(BaseModel):
         ge=0,
         description="Max conversation turns kept for multi-turn VLM history. 0 = stateless.",
     )
+
+    @field_validator("mode")
+    @classmethod
+    def _check_mode(cls, v: str) -> str:
+        s = v.strip().lower()
+        if s not in ("densify", "task"):
+            raise ValueError("mode must be 'densify' or 'task'")
+        return s
 
     @field_validator("up_axis")
     @classmethod

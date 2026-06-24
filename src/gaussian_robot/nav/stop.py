@@ -37,6 +37,8 @@ _NON_TRANSLATING = frozenset(
         Action.MOVE_DOWN,
         Action.DESCRIBE,
         Action.MARK,
+        Action.GRAB,
+        Action.DROP,
     }
 )
 
@@ -140,7 +142,10 @@ class StuckGuard:
         self._triggered = False
 
     def update(self, ctx: WalkContext) -> None:
-        if ctx.action in (Action.STOP, Action.DESCRIBE, Action.MARK) or ctx.degenerate:
+        if (
+            ctx.action in (Action.STOP, Action.DESCRIBE, Action.MARK, Action.GRAB, Action.DROP)
+            or ctx.degenerate
+        ):
             return
         self._positions.append(ctx.pose.position.copy())
         if len(self._positions) > self.window:
@@ -153,6 +158,29 @@ class StuckGuard:
 
     def should_stop(self) -> bool:
         return self._triggered
+
+
+@dataclass
+class TaskStop:
+    """Task-mode walk terminator: the VLM's ``STOP`` is authoritative completion.
+
+    In densify mode ``STOP`` is demoted to a plateau vote (the robot must not quit
+    just because the model says so); in task mode the model owns completion, so a
+    single ``STOP`` ends the walk immediately with reason ``task_complete``.
+    """
+
+    reason: str = "task_complete"
+    _done: bool = False
+
+    def reset(self) -> None:
+        self._done = False
+
+    def update(self, ctx: WalkContext) -> None:
+        if ctx.action is Action.STOP:
+            self._done = True
+
+    def should_stop(self) -> bool:
+        return self._done
 
 
 def any_walk_stop(policies: list[StopPolicy]) -> bool:
@@ -176,6 +204,7 @@ class SessionContext:
     walks_completed: int
     total_seeds: int
     last_batch_coverage_gain: float = 0.0
+    last_walk_reason: str = ""  # stop_reason of the walk just completed (for task mode)
 
 
 @runtime_checkable
@@ -183,6 +212,20 @@ class SessionStopPolicy(Protocol):
     reason: str
 
     def should_stop(self, ctx: SessionContext) -> bool: ...
+
+
+@dataclass
+class TaskComplete:
+    """Task-mode session terminator: end once a walk finished with the task done.
+
+    Task runs are a single goal-directed walk; when that walk ends because the VLM
+    declared the task complete (:class:`TaskStop`), the session is over.
+    """
+
+    reason: str = "task_complete"
+
+    def should_stop(self, ctx: SessionContext) -> bool:
+        return ctx.last_walk_reason == "task_complete"
 
 
 @dataclass

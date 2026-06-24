@@ -180,6 +180,7 @@ class ObservationBuilder:
     map_size: int = 512
     map_span: float | None = None
     task: str = ""
+    mode: str = "densify"  # "densify" (explore for coverage) | "task" (pursue the goal in `task`)
     depth_estimator: DepthEstimator | None = None
     describe_prompt: str = (
         "This is a render of a 3D Gaussian Splatting (3DGS) reconstruction, not a real photo. "
@@ -260,6 +261,40 @@ class ObservationBuilder:
         "time. Verbs: forward, back, turn_left, turn_right, move_up, move_down, look_up, "
         "look_down, mark, describe, stop."
     )
+    task_prompt_base: str = (
+        "You are a robot inside a 3D Gaussian-Splat reconstruction of a real place. You have a "
+        "MISSION, given under TASK below — for example reaching a location, finding an object, "
+        "or fetching an object from one place and carrying it to another. Accomplishing the "
+        "MISSION is your ONLY goal; do not wander for coverage.\n"
+        "\n"
+        "HOW TO ACT:\n"
+        "- NAVIGATE toward the target. forward/back move you; turn_left/turn_right and "
+        "look_up/look_down only change where you look; move_up/move_down change height.\n"
+        "- GROUND THE TARGET in the [rgb] view: if you can see the thing the MISSION refers to, "
+        "head straight to it. If you can't see it, explore toward where it is likely to be "
+        "(through doorways, along the room) and DESCRIBE to reason about what you see.\n"
+        "- GRAB when you have reached the object to pick up (you must be right in front of it). "
+        "DROP when you have carried it to the destination and are in place to release it. These "
+        "are simulated: they do not move you, they only change whether you are carrying it "
+        "([state] shows 'carrying').\n"
+        "- A fetch-and-carry mission is: go to the object -> grab -> go to the destination -> "
+        "drop -> stop. A find/reach mission is: go to the target -> stop (grab too if asked).\n"
+        "- STOP only when the MISSION is fully complete. In task mode STOP ends the run "
+        "immediately, so do not stop early.\n"
+        "\n"
+        "PANELS: [rgb] camera view; [depth] distance ahead (bright=near); [confidence] render "
+        "alpha (dark=missing geometry); [map] local top-down, rotating with you (up=forward), "
+        "red arrow=you, your trail in amber. Blurriness is a reconstruction artifact, not fog.\n"
+        "\n"
+        "Avoid driving into walls: if a forward is BLOCKED or wall_distance is tiny, turn or "
+        "back up and go around. Do not turn more than twice in a row without moving.\n"
+        "\n"
+        "Reply ONLY with JSON — a short PLAN of 1-5 actions to run in order, e.g. "
+        '{"actions": ["forward", "forward", "grab"]}. (A single {"action": "forward"} also '
+        "works.) You are re-queried after the plan finishes or if you get blocked. Verbs: "
+        "forward, back, turn_left, turn_right, move_up, move_down, look_up, look_down, grab, "
+        "drop, describe, stop."
+    )
 
     def build(
         self,
@@ -275,6 +310,7 @@ class ObservationBuilder:
         marks: int = 0,
         mark_target: int = 0,
         blocked_ahead: bool = False,
+        carrying: bool = False,
     ) -> tuple[Observation, RenderResult]:
         """Render the view and assemble the observation.
 
@@ -291,28 +327,36 @@ class ObservationBuilder:
             display_depth = self.depth_estimator.estimate(result.rgb)
         depth_panel = depth_to_uint8(display_depth)
         confidence_panel = self._confidence_panel(result.alpha)
+        task_mode = self.mode == "task"
         cur_floor = floor_xy(camera.pose.position, self.up_axis)[0]
-        gap_xy = self._nearest_gap(cur_floor)
-        gap_info = self._gap_bearing(camera.pose, cur_floor, gap_xy)
+        # The coverage-gap pointer is meaningless in task mode (the goal is the mission,
+        # not coverage), so suppress it from both the map and the state line.
+        gap_xy = None if task_mode else self._nearest_gap(cur_floor)
+        gap_info = None if task_mode else self._gap_bearing(camera.pose, cur_floor, gap_xy)
         map_panel = self._body_frame_map(coverage, camera.pose, trail, gap_xy=gap_xy)
         wall_distance = wall_distance_from_depth(result.depth)
-        state_line = self._state_line(
-            camera.pose,
-            step,
-            budget,
-            coverage_pct,
-            wall_distance,
-            gap_info,
-            marks,
-            mark_target,
-            blocked_ahead,
-        )
+        if task_mode:
+            state_line = self._task_state_line(
+                camera.pose, step, budget, wall_distance, carrying, blocked_ahead
+            )
+        else:
+            state_line = self._state_line(
+                camera.pose,
+                step,
+                budget,
+                coverage_pct,
+                wall_distance,
+                gap_info,
+                marks,
+                mark_target,
+                blocked_ahead,
+            )
 
-        parts = [self.prompt]
+        parts = [self.task_prompt_base if task_mode else self.prompt]
+        if self.task:
+            parts.append(f"TASK (your mission): {self.task}" if task_mode else f"TASK: {self.task}")
         if scene_description:
             parts.append(f"SCENE DESCRIPTION: {scene_description}")
-        if self.task:
-            parts.append(f"TASK: {self.task}")
         if action_history:
             recent = action_history[-8:]
             parts.append(f"[history] last actions: {', '.join(recent)}")
@@ -355,6 +399,31 @@ class ObservationBuilder:
             return np.zeros((512, 512, 3), dtype=np.uint8)
         gray = (alpha * 255).clip(0, 255).astype(np.uint8)
         return _gray_to_rgb(gray)
+
+    def _task_state_line(
+        self,
+        pose: Pose,
+        step: int,
+        budget: int,
+        wall_distance: float | None,
+        carrying: bool,
+        blocked_ahead: bool,
+    ) -> str:
+        """Compact state for task mode: position, carried-state, wall, blocked — no coverage."""
+        step_str = f"{step}/{budget}" if budget > 0 else str(step)
+        parts = [
+            f"[state] step {step_str}",
+            f"pose ({pose.position[0]:.2f},{pose.position[1]:.2f},{pose.position[2]:.2f})",
+            f"carrying {'yes' if carrying else 'no'}",
+        ]
+        if wall_distance is not None:
+            parts.append(f"wall ahead {wall_distance:.2f}m")
+        if blocked_ahead:
+            parts.append(
+                "!! BLOCKED: a wall is right ahead and your last forward did NOT move you — "
+                "do not go forward; BACK up or turn ~180° (same way 3×) toward open space"
+            )
+        return "; ".join(parts)
 
     def _state_line(
         self,

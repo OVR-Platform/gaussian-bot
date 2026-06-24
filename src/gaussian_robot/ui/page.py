@@ -68,8 +68,13 @@ PAGE_HTML = """<!doctype html>
     <button onclick="refreshVLLM()" class="ghost">vLLM status</button>
   </div>
   <pre id="vllm-log">vLLM log idle</pre>
-  <h2>Task</h2>
-  <label>task prompt (optional)</label>
+  <h2>Mode &amp; task</h2>
+  <label>mode</label>
+  <select id="mode" onchange="onModeChange()">
+    <option value="densify">densify — explore to improve the reconstruction</option>
+    <option value="task">task — pursue a goal (find / fetch-and-carry)</option>
+  </select>
+  <label id="task_prompt_label">task prompt (optional)</label>
   <input id="task_prompt" placeholder="e.g. find the office door"/>
   <h2>Scene &amp; exploration</h2>
   <label>up axis</label>
@@ -159,12 +164,23 @@ async function loadConfig(){
   document.getElementById("pose_budget").value = c.pose_budget;
   document.getElementById("num_seeds").value = c.num_seeds;
   document.getElementById("pose_target").value = c.pose_target;
+  document.getElementById("mode").value = c.mode || "densify";
+  onModeChange();
+}
+function onModeChange(){
+  const task = document.getElementById("mode").value === "task";
+  const lbl = document.getElementById("task_prompt_label");
+  lbl.textContent = task ? "task prompt (REQUIRED — the mission)" : "task prompt (optional)";
+  document.getElementById("task_prompt").placeholder = task
+    ? "e.g. take the red box from the desk to the front door"
+    : "e.g. find the office door";
 }
 function gather(){
   const split3 = v => v.split(",").map(parseFloat);
   const splitArgs = v => v.trim() === "" ? [] : v.trim().split(/\s+/);
   const cr = document.getElementById("coverage_radius").value;
   return {
+    mode: document.getElementById("mode").value,
     task_prompt: document.getElementById("task_prompt").value || "",
     ply_path: document.getElementById("ply_path").value || null,
     vlm_base_url: document.getElementById("vlm_base_url").value,
@@ -218,13 +234,16 @@ function setChips(o){ document.getElementById("chips").innerHTML =
   Object.entries(o).map(([k,v])=>`<span class="chip"><b>${k}</b> ${v}</span>`).join(""); }
 
 let SEEDS = [], SEED_KINDS = [], MARKS = [], FRONTIERS = [], GAPS = [], LAST_STEP = null, CUR_WALK = null;
+let CARRIES = [], MODE = "densify";  // task mode: grab/drop pins on the map
 const seedColor = kind => (kind === "capture" ? "#f5be28" : "#e0662a");  // amber=real, orange=synthetic
 const walkIndex = wid => { const n = String(wid).match(/\\d+/); return n ? parseInt(n[0], 10) : -1; };
 const walkKind = wid => SEED_KINDS[walkIndex(wid)] || "?";
-const MAP_LEGEND=[["#ff4fa3","3D gap (unseen volume — brighter = more)"],["#50c8d2","recon. frontier"],["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#39e070","current path"],["#d6201e","robot"],["#d36bff","mark — current walk"],["rgba(192,80,255,0.5)","mark — earlier walk"]];
+const LEGEND_DENSIFY=[["#ff4fa3","3D gap (unseen volume — brighter = more)"],["#50c8d2","recon. frontier"],["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#39e070","current path"],["#d6201e","robot"],["#d36bff","mark — current walk"],["rgba(192,80,255,0.5)","mark — earlier walk"]];
+const LEGEND_TASK=[["#f5be28","start"],["#39e070","path"],["#d6201e","robot"],["#2ad07a","grab"],["#e0902a","drop"]];
 function renderLegend(){
   const el=document.getElementById("map-legend"); if(!el) return;
-  el.innerHTML=MAP_LEGEND.map(([c,t])=>`<span><i style="background:${c}"></i>${t}</span>`).join("");
+  const items = MODE==="task" ? LEGEND_TASK : LEGEND_DENSIFY;
+  el.innerHTML=items.map(([c,t])=>`<span><i style="background:${c}"></i>${t}</span>`).join("");
 }
 function drawWorld(ctx, sampled, trail, pose){
   if(!BOUNDS) return;
@@ -279,6 +298,12 @@ function drawWorld(ctx, sampled, trail, pose){
     ctx.beginPath(); ctx.moveTo(x,y-s); ctx.lineTo(x+s,y); ctx.lineTo(x,y+s); ctx.lineTo(x-s,y); ctx.closePath();
     ctx.fillStyle=cur?"#d36bff":"rgba(192,80,255,0.30)"; ctx.fill();
     if(cur){ ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.stroke(); } });
+  // task mode: grab (green ▲) and drop (orange ▼) pins where manipulation happened.
+  (CARRIES||[]).forEach(c=>{ const x=tx(c.p[0]),y=ty(c.p[1]),s=6, up=c.kind==="grab";
+    ctx.fillStyle=up?"#2ad07a":"#e0902a"; ctx.beginPath();
+    if(up){ ctx.moveTo(x,y-s); ctx.lineTo(x+s,y+s); ctx.lineTo(x-s,y+s); }
+    else  { ctx.moveTo(x,y+s); ctx.lineTo(x+s,y-s); ctx.lineTo(x-s,y-s); }
+    ctx.closePath(); ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.stroke(); });
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
   // world axis labels: horizontal = +floor axis a, vertical = +floor axis b (up axis is out of plane)
   ctx.fillStyle="#9aa"; ctx.font="12px sans-serif";
@@ -351,7 +376,8 @@ async function run(endpoint){
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
       SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || []; MARKS = []; LAST_STEP = null; CUR_WALK = null;
-      FRONTIERS = m.frontiers || []; GAPS = m.gaps || []; renderLegend();
+      FRONTIERS = m.frontiers || []; GAPS = m.gaps || []; CARRIES = [];
+      MODE = document.getElementById("mode").value; renderLegend();
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
       resetMovies();
@@ -363,6 +389,15 @@ async function run(endpoint){
       const log = document.getElementById("action-log");
       log.textContent += `── ${m.walk_id} (${walkKind(m.walk_id)}) ended: ${m.reason} (${m.steps} steps) ──\n`;
       log.scrollTop = log.scrollHeight; addWalkOption(m.walk_id); return; }
+    if(m.type==="carry"){
+      CARRIES.push({p:m.floor, kind:m.kind, walk:m.walk_id}); CUR_WALK=m.walk_id;
+      const log = document.getElementById("action-log");
+      log.textContent += `${m.kind==="grab"?"✋":"📦"} ${m.walk_id} #${m.step}: ${m.kind} (carrying: ${m.carrying?"yes":"no"})\n`;
+      log.scrollTop = log.scrollHeight;
+      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, action:m.kind, carrying:m.carrying?"yes":"no"});
+      const ctx=document.getElementById("world-map").getContext("2d");
+      if(LAST_STEP) drawWorld(ctx, LAST_STEP.sampled, LAST_STEP.trail, LAST_STEP.pose); else drawWorld(ctx, [], [], null);
+      return; }
     if(m.type==="mark"){
       MARKS.push({p:m.floor, walk:m.walk_id}); CUR_WALK=m.walk_id;
       const tgt = num(document.getElementById("pose_target").value, 30);

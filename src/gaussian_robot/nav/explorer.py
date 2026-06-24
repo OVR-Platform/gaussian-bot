@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from gaussian_robot.events import (
+    CarryEvent,
     EventSink,
     MarkEvent,
     SceneDescribeEvent,
@@ -162,9 +163,11 @@ class Explorer:
     actions_per_query: int = 1  # action chunking: max actions the VLM plans per query
     height_field: HeightField | None = None  # ground heights for terrain-following
     gap_floor: np.ndarray | None = None  # (K, 2) floor-projected 3D coverage gaps, for the UI
+    mode: str = "densify"  # "densify" (coverage) | "task" (goal-directed, grab/drop)
     _marks_total: int = 0  # running count of marked fill-in poses this session
     _mark_pos: list[np.ndarray] = field(default_factory=list)  # 3D positions of marks (dedup)
     _eye_offset: float | None = None  # camera height above local ground for this walk
+    _carrying: bool = False  # task mode: is the robot currently carrying the target?
 
     def _describe_step(
         self,
@@ -244,6 +247,70 @@ class Explorer:
         )
         self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=False)
 
+    def _carry_step(
+        self,
+        robot: Robot,
+        action: Action,
+        result: WalkResult,
+        action_history: list[str],
+        *,
+        walk_id: str,
+        step: int,
+        raw_text: str = "",
+    ) -> None:
+        """Task mode: simulated grab/drop. Toggles the carried state and emits a CarryEvent."""
+        action_history.append(action.value)
+        self._carrying = action is Action.GRAB  # grab -> carrying, drop -> not carrying
+        result.steps.append(
+            WalkStep(
+                pose=robot.pose, action=action, novelty=0.0, degenerate=False, raw_text=raw_text
+            )
+        )
+        if self.event_sink is not None:
+            self.event_sink(
+                CarryEvent(
+                    walk_id=walk_id,
+                    step=step,
+                    floor=floor_xy(robot.pose.position, self.scene.up_axis)[0],
+                    kind=action.value,
+                    carrying=self._carrying,
+                )
+            )
+
+    def _dispatch_static(
+        self,
+        action: Action,
+        robot: Robot,
+        result: WalkResult,
+        action_history: list[str],
+        scene_description: str,
+        *,
+        walk_id: str,
+        step: int,
+        raw_text: str,
+    ) -> tuple[bool, str, bool]:
+        """Handle the non-moving actions. Returns ``(handled, scene_description, clear_plan)``.
+
+        DESCRIBE refreshes the scene description and forces a re-plan; MARK and the simulated
+        GRAB/DROP record state without moving and keep the current plan running.
+        """
+        if action is Action.DESCRIBE:
+            sd = self._describe_step(
+                robot, result, action_history, walk_id=walk_id, step=step, raw_text=raw_text
+            )
+            return True, sd, True
+        if action is Action.MARK:
+            self._mark_step(
+                robot, result, action_history, walk_id=walk_id, step=step, raw_text=raw_text
+            )
+            return True, scene_description, False
+        if action in (Action.GRAB, Action.DROP):
+            self._carry_step(
+                robot, action, result, action_history, walk_id=walk_id, step=step, raw_text=raw_text
+            )
+            return True, scene_description, False
+        return False, scene_description, False
+
     def _maybe_auto_mark(
         self, robot: Robot, result: WalkResult, render: RenderResult, *, walk_id: str, step: int
     ) -> None:
@@ -299,7 +366,8 @@ class Explorer:
         conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
         coverage.add_pose(next_pose, walk_id=walk_id, confidence=conf)
         trail.append(next_pose)
-        self._maybe_auto_mark(robot, result, render, walk_id=walk_id, step=step)
+        if self.mode != "task":  # auto-marking builds the densify deliverable, not a task goal
+            self._maybe_auto_mark(robot, result, render, walk_id=walk_id, step=step)
 
     def _seed_eye_offset(self, seed_pose: Pose) -> float | None:
         """Height of the seed camera above its local ground (None if unavailable)."""
@@ -414,6 +482,7 @@ class Explorer:
         )
 
         self._eye_offset = self._seed_eye_offset(seed_pose)
+        self._carrying = False  # fresh carried-state per walk
 
         action_history: list[str] = []
         stop_reason = "step_budget"
@@ -444,6 +513,7 @@ class Explorer:
                 marks=self._marks_total,
                 mark_target=self.mark_target,
                 blocked_ahead=blocked_ahead,
+                carrying=self._carrying,
             )
             if not plan:  # action chunking: query the VLM only when the plan runs out
                 plan_decision = self.vlm.act(observation)
@@ -454,28 +524,20 @@ class Explorer:
             action = plan.pop(0)
             step = step_idx + 1
 
-            if action is Action.DESCRIBE:
-                scene_description = self._describe_step(
-                    robot,
-                    result,
-                    action_history,
-                    walk_id=walk_id,
-                    step=step,
-                    raw_text=decision.raw_text,
-                )
-                plan = []  # re-plan with the fresh description
+            handled, scene_description, clear_plan = self._dispatch_static(
+                action,
+                robot,
+                result,
+                action_history,
+                scene_description,
+                walk_id=walk_id,
+                step=step,
+                raw_text=decision.raw_text,
+            )
+            if handled:
+                if clear_plan:
+                    plan = []  # re-plan with the fresh description
                 continue
-
-            if action is Action.MARK:
-                self._mark_step(
-                    robot,
-                    result,
-                    action_history,
-                    walk_id=walk_id,
-                    step=step,
-                    raw_text=decision.raw_text,
-                )
-                continue  # marking doesn't change the route — keep executing the plan
 
             reason, blocked, degenerate = self._step_action(
                 robot,
@@ -554,7 +616,8 @@ class Explorer:
         prev_cov = floor_coverage(coverage, radius=self.coverage_radius)
         reason = "seeds_exhausted"
         for i, seed in enumerate(seeds):
-            results.append(self.run_walk(seed.pose, coverage, walk_id=f"walk{i}"))
+            walk = self.run_walk(seed.pose, coverage, walk_id=f"walk{i}")
+            results.append(walk)
             cur_cov = floor_coverage(coverage, radius=self.coverage_radius)
             gain = cur_cov - prev_cov
             prev_cov = cur_cov
@@ -563,6 +626,7 @@ class Explorer:
                 walks_completed=i + 1,
                 total_seeds=len(seeds),
                 last_batch_coverage_gain=gain,
+                last_walk_reason=walk.stop_reason,
             )
             fired = session_stop_reason(self.session_policies, ctx)
             if fired is not None:

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from gaussian_robot.config import load_config, save_config
 from gaussian_robot.events import (
+    CarryEvent,
     MarkEvent,
     SceneDescribeEvent,
     SessionEvent,
@@ -70,6 +71,17 @@ def _capture_event(event: SessionEvent) -> None:
         if pose is not None:
             _WALKS.setdefault(event.walk_id, []).append(
                 {"pose": pose, "caption": "★ MARK — fill-in pose", "hold": 14}
+            )
+    elif isinstance(event, CarryEvent):
+        pose = _LAST_POSE.get(event.walk_id)
+        if pose is not None:
+            label = "✋ GRAB" if event.kind == "grab" else "📦 DROP"
+            _WALKS.setdefault(event.walk_id, []).append(
+                {
+                    "pose": pose,
+                    "caption": f"{label} (carrying: {'yes' if event.carrying else 'no'})",
+                    "hold": 14,
+                }
             )
     elif isinstance(event, SceneDescribeEvent):
         text = event.description[:200]

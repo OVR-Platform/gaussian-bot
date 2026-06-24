@@ -54,6 +54,8 @@ from gaussian_robot.nav.stop import (
     SessionStopPolicy,
     StopPolicy,
     StuckGuard,
+    TaskComplete,
+    TaskStop,
 )
 from gaussian_robot.nav.terrain import HeightField, aerial_target, build_height_field
 from gaussian_robot.render.base import Renderer, RenderResult
@@ -835,6 +837,34 @@ def _aerial_seed(
     return SeedPose(pose=pose, kind="aerial")
 
 
+def _build_stop_policies(
+    config: RunConfig, space: ActionSpace, coverage_radius: float, task_mode: bool
+) -> tuple[list[StopPolicy], list[SessionStopPolicy]]:
+    """Walk- and session-level stop policies for the run's mode.
+
+    Task mode: the VLM owns completion (``TaskStop`` ends the walk on a ``stop``, ``TaskComplete``
+    ends the session), with the bounds/stuck safety guards. Densify mode: coverage-driven.
+    """
+    if task_mode:
+        walk: list[StopPolicy] = [TaskStop(), BoundsGuard(), StuckGuard(step=space.step)]
+        session: list[SessionStopPolicy] = [TaskComplete(), SeedExhaustion()]
+        return walk, session
+    walk = [
+        # window=8: tolerate a longer unproductive stretch before ending a walk, so deliberate
+        # fine-grained exploration isn't cut short prematurely.
+        CoveragePlateau(novelty_delta=space.step, window=8),
+        BoundsGuard(),
+        StuckGuard(step=space.step),
+    ]
+    session = [
+        PoseBudget(max_poses=config.pose_budget),
+        CoverageTarget(radius=coverage_radius, tau=0.8),
+        QualityTarget(radius=coverage_radius, tau=0.7),
+        SeedExhaustion(),
+    ]
+    return walk, session
+
+
 def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], CoverageState]:
     """Construct an :class:`Explorer`, seeds and a fresh coverage state from config.
 
@@ -874,6 +904,10 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
 
     # Default the map to a local window (~10 steps across) so motion is visible;
     # the whole-scene view made every step an invisible sub-pixel nudge.
+    task_mode = config.mode == "task"
+    if task_mode and not config.task_prompt.strip():
+        raise ValueError("task mode requires a non-empty task_prompt (the mission)")
+
     map_span = config.map_span if config.map_span is not None else space.step * 10.0
     builder = ObservationBuilder(
         renderer=renderer,
@@ -881,22 +915,13 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         map_size=config.map_size,
         map_span=map_span,
         task=config.task_prompt,
+        mode=config.mode,
         depth_estimator=depth_estimator,
     )
 
-    walk_policies: list[StopPolicy] = [
-        # window=8: tolerate a longer unproductive stretch before ending a walk,
-        # so deliberate fine-grained exploration isn't cut short prematurely.
-        CoveragePlateau(novelty_delta=space.step, window=8),
-        BoundsGuard(),
-        StuckGuard(step=space.step),
-    ]
-    session_policies: list[SessionStopPolicy] = [
-        PoseBudget(max_poses=config.pose_budget),
-        CoverageTarget(radius=coverage_radius, tau=0.8),
-        QualityTarget(radius=coverage_radius, tau=0.7),
-        SeedExhaustion(),
-    ]
+    walk_policies, session_policies = _build_stop_policies(
+        config, space, coverage_radius, task_mode
+    )
     cloud_means = getattr(getattr(renderer, "cloud", None), "means", None)
     means_np: np.ndarray | None = None
     if cloud_means is not None:
@@ -914,7 +939,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
     # an unmapped region (e.g. an uncaptured upper floor) has no occupancy, so it is never a
     # "gap" — and stray high floaters above the material are clipped out below.
     gap_centers = np.empty((0, 3), dtype=np.float64)
-    if config.coverage_3d and means_np is not None and means_np.shape[0] > 0:
+    if not task_mode and config.coverage_3d and means_np is not None and means_np.shape[0] > 0:
         cov3d = _build_coverage3d(renderer, means_np, capture_poses, config, bmin, bmax)
         if cov3d is not None:
             gap_centers = _clip_to_material_band(cov3d.gap_centers(), means_np, up_axis)
@@ -939,6 +964,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         actions_per_query=config.actions_per_query,
         height_field=height_field,
         gap_floor=gap_floor,
+        mode=config.mode,
     )
     seed_origin = _best_origin(renderer, up_axis, bmin, bmax)
 
@@ -952,12 +978,14 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         capture_poses=seed_pool,
         up_axis=up_axis,
     )
+    # A task is one goal-directed walk from a single start pose; densify fans out over many.
+    num_seeds = 1 if task_mode else config.num_seeds
     # Capture poses are known-good viewpoints, so validation can be lenient (see
     # validate_seed_poses); guessed density/grid candidates need the strict checks.
     seeds = validate_seed_poses(
-        renderer, candidates, num_seeds=config.num_seeds, step=space.step, strict=not seed_pool
+        renderer, candidates, num_seeds=num_seeds, step=space.step, strict=not seed_pool
     )
-    if config.aerial_survey and means_np is not None:
+    if not task_mode and config.aerial_survey and means_np is not None:
         # Survey over the 3D coverage gaps (unseen roofs/structure) when we have them,
         # else over the tallest geometry.
         survey_points = gap_centers if gap_centers.shape[0] > 0 else means_np
