@@ -394,14 +394,28 @@ def test_marks_are_deduped_by_coverage_radius() -> None:
 def test_follow_terrain_sets_camera_above_local_ground() -> None:
     means = np.array([[5.0, 0.0, 5.0], [5.0, 1.0, 5.0], [5.0, 2.0, 5.0]])  # ground near (5,5)
     hf = build_height_field(means, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
-    explorer = _explorer([Action.STOP])
+    explorer = _explorer([Action.STOP])  # action_space.step == 1.0
+    explorer.height_field = hf
+    explorer._eye_offset = 1.5
+    ground = hf.ground(5.0, 5.0)
+    assert ground is not None
+    # Start within one step of the target so the bounded correction pins it exactly.
+    adjusted = explorer._follow_terrain(Pose(position=np.array([5.0, ground + 1.7, 5.0])))
+    assert adjusted.position[1] == pytest.approx(ground + 1.5)  # up-coord pinned to ground+eye
+    assert np.allclose(adjusted.position[[0, 2]], [5.0, 5.0])  # floor position unchanged
+
+
+def test_follow_terrain_clamps_a_large_vertical_jump() -> None:
+    # A bad edge/sparse cell would otherwise teleport the camera vertically (the observed
+    # forward y -2.0 -> 1.1 bug). One step may only correct by ~one step length.
+    means = np.array([[5.0, 0.0, 5.0], [5.0, 1.0, 5.0], [5.0, 2.0, 5.0]])
+    hf = build_height_field(means, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
+    explorer = _explorer([Action.STOP])  # action_space.step == 1.0
     explorer.height_field = hf
     explorer._eye_offset = 1.5
     adjusted = explorer._follow_terrain(Pose(position=np.array([5.0, 9.0, 5.0])))
-    ground = hf.ground(5.0, 5.0)
-    assert ground is not None
-    assert adjusted.position[1] == pytest.approx(ground + 1.5)  # up-coord pinned to ground+eye
-    assert np.allclose(adjusted.position[[0, 2]], [5.0, 5.0])  # floor position unchanged
+    # ground+eye ~ 1.9, current 9.0 -> raw delta ~ -7.1, clamped to -1.0 (one step).
+    assert adjusted.position[1] == pytest.approx(8.0)  # 9.0 - step, not teleported to ~1.9
 
 
 def test_render_is_runtime_checkable() -> None:

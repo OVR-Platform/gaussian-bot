@@ -391,6 +391,12 @@ class Explorer:
             return pose
         up = up_vector(self.scene.up_axis)
         delta = (ground + self._eye_offset) - float(pose.position @ up)
+        # Terrain undulates gradually: one floor step can't change ground height by much more
+        # than a step length. A larger jump is a bad cell estimate (a sparse/edge cell, or one
+        # dominated by a wall/column/ceiling), not real slope — clamp it so the camera is never
+        # teleported off the mapped floor into the void (which reads as degenerate -> bounds).
+        max_climb = self.action_space.step
+        delta = float(np.clip(delta, -max_climb, max_climb))
         return Pose(position=pose.position + delta * up, rotation=pose.rotation)
 
     def _step_action(
