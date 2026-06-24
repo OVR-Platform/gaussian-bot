@@ -16,18 +16,26 @@ from gaussian_robot.nav.observation import (
 def test_frontier_is_empty_cell_adjacent_to_observed() -> None:
     grid = np.zeros((5, 5))
     grid[2, 2] = 1.0  # one observed (dense) cell
-    mask = frontier_mask(grid, empty_max=0.02, observed_min=0.1)
+    mask = frontier_mask(grid, observed_min=0.1)
     # the 4-neighbours of the observed cell are empty AND adjacent -> frontiers
     assert mask[1, 2] and mask[3, 2] and mask[2, 1] and mask[2, 3]
-    # the observed cell itself is not empty -> not a frontier
+    # the observed cell itself is not under-sampled -> not a frontier
     assert not mask[2, 2]
     # a far corner touches no observed cell -> open void, not a frontier
     assert not mask[0, 0]
 
 
+def test_frontier_includes_interior_undersampled_pocket() -> None:
+    grid = np.full((5, 5), 0.6)  # well reconstructed everywhere...
+    grid[2, 2] = 0.05  # ...except an interior under-sampled pocket (sparse, not empty)
+    mask = frontier_mask(grid, observed_min=0.1, under_frac=0.5)  # under_max = 0.5*median(0.6)=0.3
+    assert mask[2, 2]  # the weak interior cell is a frontier worth filling
+    assert not mask[0, 0]  # a fully-reconstructed corner is not
+
+
 def test_no_frontier_when_uniform() -> None:
-    assert not frontier_mask(np.ones((4, 4))).any()  # all observed, nothing empty
-    assert not frontier_mask(np.zeros((4, 4))).any()  # all empty, nothing observed
+    assert not frontier_mask(np.ones((4, 4))).any()  # all reconstructed, none under-sampled
+    assert not frontier_mask(np.zeros((4, 4))).any()  # nothing reconstructed at all
 
 
 def test_frontier_floor_positions_maps_cells_into_bounds() -> None:

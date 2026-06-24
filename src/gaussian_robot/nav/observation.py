@@ -59,24 +59,29 @@ def _rotation_streak(action_history: list[str] | None) -> int:
 
 
 def frontier_mask(
-    density_grid: np.ndarray, *, empty_max: float = 0.02, observed_min: float = 0.10
+    density_grid: np.ndarray, *, observed_min: float = 0.10, under_frac: float = 0.5
 ) -> np.ndarray:
     """Boolean grid of **reconstruction frontiers**: real holes worth new views.
 
-    A frontier cell is (near-)empty (``<= empty_max`` normalised density — no
-    gaussians yet) **and** 4-adjacent to an observed cell (``> observed_min``).
-    That is the reachable edge of the reconstruction (or an interior pocket the
-    splat missed) — a genuine candidate for capturing new views. Empty cells
-    that only touch other empty cells (open void outside the scene) are *not*
-    frontiers, and dense surfaces (walls/trees you bump into) never qualify.
+    A frontier is an **under-sampled** cell — density below ``under_frac`` of the
+    *typical observed* density (the median over reconstructed cells) — that is
+    4-adjacent to a reconstructed cell (``> observed_min``). This captures both
+    the reconstruction's outer edge (empty cells next to observed ones) **and**
+    interior under-sampled pockets (sparse-but-not-empty regions like smeared
+    ground/foliage), so a gap *near the agent* is found — not only the far scene
+    boundary. Fully-reconstructed cells and open void with no observed neighbour
+    never qualify.
     """
     observed = density_grid > observed_min
+    if not observed.any():
+        return np.zeros(density_grid.shape, dtype=bool)
+    under_max = under_frac * float(np.median(density_grid[observed]))
     adj = np.zeros(density_grid.shape, dtype=bool)
     adj[:-1, :] |= observed[1:, :]
     adj[1:, :] |= observed[:-1, :]
     adj[:, :-1] |= observed[:, 1:]
     adj[:, 1:] |= observed[:, :-1]
-    return (density_grid <= empty_max) & adj
+    return (density_grid < under_max) & adj
 
 
 def frontier_floor_positions(renderer: Renderer) -> np.ndarray:
