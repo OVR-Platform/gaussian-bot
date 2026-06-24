@@ -42,6 +42,27 @@ def wall_distance_from_depth(depth: np.ndarray | None) -> float | None:
     return float(np.median(finite))
 
 
+def frontier_mask(
+    density_grid: np.ndarray, *, empty_max: float = 0.02, observed_min: float = 0.10
+) -> np.ndarray:
+    """Boolean grid of **reconstruction frontiers**: real holes worth new views.
+
+    A frontier cell is (near-)empty (``<= empty_max`` normalised density — no
+    gaussians yet) **and** 4-adjacent to an observed cell (``> observed_min``).
+    That is the reachable edge of the reconstruction (or an interior pocket the
+    splat missed) — a genuine candidate for capturing new views. Empty cells
+    that only touch other empty cells (open void outside the scene) are *not*
+    frontiers, and dense surfaces (walls/trees you bump into) never qualify.
+    """
+    observed = density_grid > observed_min
+    adj = np.zeros(density_grid.shape, dtype=bool)
+    adj[:-1, :] |= observed[1:, :]
+    adj[1:, :] |= observed[:-1, :]
+    adj[:, :-1] |= observed[:, 1:]
+    adj[:, 1:] |= observed[:, :-1]
+    return (density_grid <= empty_max) & adj
+
+
 def depth_to_uint8(depth: np.ndarray | None) -> np.ndarray:
     """Colormap a depth map to ``(H, W, 3)`` uint8 (near = bright).
 
@@ -99,55 +120,50 @@ class ObservationBuilder:
         "for new viewpoints to improve the reconstruction?"
     )
     prompt: str = (
-        "You are a robot exploring a 3D scene to find gaps in the reconstruction.\n"
+        "You are a robot inside a 3D Gaussian-Splat reconstruction. Your job is to TRAVEL TO "
+        "GAPS: under-sampled regions at the edge of the reconstruction (or pockets it missed) "
+        "where a new camera viewpoint could be captured to fill the scene in. You reposition so "
+        "those gaps can be observed — you do NOT just stare at whatever looks bad.\n"
+        "\n"
+        "WHAT A GAP IS (and is NOT):\n"
+        "- A gap is OPEN, reachable space that is under-observed — you can travel toward it.\n"
+        "- A wall, tree, object or any surface right in front of you is NOT a gap. It only looks "
+        "blurry because you are too close. It is an OBSTACLE: go around it, do not push into it.\n"
+        "- Being stuck/blocked against something is never a goal. If you can't move forward, the "
+        "answer is to turn or back away toward open space — never to sit there.\n"
         "\n"
         "PANELS:\n"
-        "- [rgb] camera view\n"
-        "- [depth] distance map (bright = near/wall, dark = far/open)\n"
-        "- [confidence] per-pixel RENDER ALPHA: bright = solid geometry, dark = gaps/holes/missing surfaces. "
-        "Different from the map — this reflects per-pixel opacity, not training coverage.\n"
-        "- [map] LOCAL top-down view, centred on you and rotating with you (up = forward). "
-        "Background colour = 3DGS TRAINING DENSITY: red = sparse (few Gaussians, needs more "
-        "views), green = dense (well-sampled). Blue dots = visited, amber line = your trail, "
-        "red arrow = you. Faint grey rings mark distance (the label is the map's radius in "
-        "metres); the small 'N' tick is fixed world-north, so it swings when you turn but "
-        "holds still when you only move.\n"
+        "- [rgb] camera view.\n"
+        "- [depth] distance ahead (bright = near/surface, dark = far/open). Bright everywhere = a "
+        "surface right in front of you.\n"
+        "- [confidence] render alpha: bright = solid geometry, dark = holes/missing surface.\n"
+        "- [map] LOCAL top-down view, centred on you, rotating with you (up = forward). "
+        "Background = training density: red = sparse, green = dense. Blue dots = visited, "
+        "amber line = your trail, red arrow = you, MAGENTA diamond = the nearest GAP to head "
+        "for (clamped to the edge as a pointer when it's beyond the view). Grey rings mark "
+        "distance; the 'N' tick is fixed world-north.\n"
         "\n"
-        "NOTE: the [depth] panel may use relative (non-metric) scale if a monocular depth estimator "
-        "is active. Use wall_distance in [state] for metric distance judgements.\n"
-        "\n"
-        "CONTEXT:\n"
-        "You see the full history of previous frames. Use them to remember what "
-        "you were heading toward and why. If you spotted a gap and turned toward "
-        "it, follow through.\n"
-        "The [state] line shows your coverage %, step count, and wall distance.\n"
+        "NOTE: the [depth] panel may use relative (non-metric) scale if a monocular estimator is "
+        "active. Use wall_distance in [state] for metric distance, and 'nearest gap' in [state] "
+        "for the bearing/distance to the closest gap.\n"
         "\n"
         "STRATEGY:\n"
-        "1. FORWARD is your default. Move forward when the path is open.\n"
-        "2. Seek out DARK regions in confidence and RED regions in the map — "
-        "those are gaps that need you.\n"
-        "3. After several forward steps, turn to scan for new gaps.\n"
-        "4. When you see a gap in any direction, commit to reaching it.\n"
-        "5. Use DESCRIBE if you feel disoriented or entered a very different area "
-        "and want an updated scene summary.\n"
-        "6. LOOK_UP to scan ceilings and tops of objects; LOOK_DOWN to inspect floors. "
-        "Use them when you enter a new area or see incomplete surfaces above/below.\n"
-        "\n"
-        "WALLS AND OBSTACLES:\n"
-        "- If the depth panel is mostly bright or wall_distance in [state] is "
-        "small, you are facing a wall.\n"
-        "- A wall is NOT a reason to stop. Back up, turn, and go somewhere else.\n"
-        "- If you see the same wall for several frames, you are stuck. Turn the "
-        "OTHER direction or back up more aggressively.\n"
-        "- Check [history]: if it shows repeating patterns like "
-        "forward,back,forward,back you are oscillating. Break the loop by "
-        "turning.\n"
+        "1. STEER TOWARD THE GAP: turn until the magenta diamond / 'nearest gap' bearing is "
+        "roughly ahead, then move forward through open space toward it.\n"
+        "2. If wall_distance is small or [depth] is mostly bright, an obstacle is in the way — "
+        "turn or back up to find a clear route around it, then resume toward the gap.\n"
+        "3. Don't chase blur for its own sake: blur from being too close to a surface is not a "
+        "gap. Only under-observed OPEN regions (the gap marker, dark [confidence] holes you can "
+        "approach) are worth reaching.\n"
+        "4. LOOK_UP / LOOK_DOWN to check ceilings/floors when entering a new area; DESCRIBE if "
+        "disoriented.\n"
+        "5. Check [history]: patterns like forward,back,forward,back mean you are oscillating "
+        "against an obstacle — break out by turning toward the gap bearing.\n"
         "\n"
         "STOPPING:\n"
-        "- Check the coverage % in [state]. If coverage is below 90%, there are "
-        "gaps you haven't reached yet. Do NOT stop.\n"
-        "- Only stop when coverage is high AND you see no dark/red areas left.\n"
-        "- Hitting a dead end is NEVER a reason to stop. Turn around.\n"
+        "- Keep going while a gap is reported in [state] or visible on the map.\n"
+        "- Only stop when there is no gap in range AND coverage is high. A wall or dead end is "
+        "never a reason to stop — turn around.\n"
         "\n"
         'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|look_up|look_down|describe|stop>"}.'
     )
@@ -179,9 +195,14 @@ class ObservationBuilder:
             display_depth = self.depth_estimator.estimate(result.rgb)
         depth_panel = depth_to_uint8(display_depth)
         confidence_panel = self._confidence_panel(result.alpha)
-        map_panel = self._body_frame_map(coverage, camera.pose, trail)
+        cur_floor = floor_xy(camera.pose.position, self.up_axis)[0]
+        gap_xy = self._nearest_gap(cur_floor)
+        gap_info = self._gap_bearing(camera.pose, cur_floor, gap_xy)
+        map_panel = self._body_frame_map(coverage, camera.pose, trail, gap_xy=gap_xy)
         wall_distance = wall_distance_from_depth(result.depth)
-        state_line = self._state_line(camera.pose, step, budget, coverage_pct, wall_distance)
+        state_line = self._state_line(
+            camera.pose, step, budget, coverage_pct, wall_distance, gap_info
+        )
 
         parts = [self.prompt]
         if scene_description:
@@ -232,6 +253,7 @@ class ObservationBuilder:
         budget: int,
         coverage_pct: float = 0.0,
         wall_distance: float | None = None,
+        gap_info: tuple[float, float] | None = None,
     ) -> str:
         step_str = f"{step}/{budget}" if budget > 0 else str(step)
         parts = [
@@ -241,7 +263,50 @@ class ObservationBuilder:
         ]
         if wall_distance is not None:
             parts.append(f"wall ahead {wall_distance:.2f}m")
+        if gap_info is not None:
+            dist, bearing = gap_info
+            if abs(bearing) < 12:
+                parts.append(f"nearest gap {dist:.1f}m ahead")
+            else:
+                side = "right" if bearing > 0 else "left"
+                parts.append(f"nearest gap {abs(bearing):.0f}° {side}, {dist:.1f}m")
+        else:
+            parts.append("nearest gap: none in range")
         return "; ".join(parts)
+
+    def _nearest_gap(self, cur_floor: np.ndarray) -> np.ndarray | None:
+        """World floor ``(x, z)`` of the nearest reconstruction frontier, or None."""
+        cloud = getattr(self.renderer, "cloud", None)
+        grid = getattr(cloud, "density_grid", None)
+        db = getattr(cloud, "density_bounds", None)
+        if grid is None or db is None:
+            return None
+        mask = frontier_mask(grid)
+        if not mask.any():
+            return None
+        lo, hi = db
+        g = grid.shape[0]
+        ix, iz = np.nonzero(mask)  # axes [x_bin, z_bin]
+        gx = lo[0] + (ix + 0.5) / g * (hi[0] - lo[0])
+        gz = lo[2] + (iz + 0.5) / g * (hi[2] - lo[2])
+        pts = np.stack([gx, gz], axis=1)
+        d2 = ((pts - cur_floor) ** 2).sum(axis=1)
+        return np.asarray(pts[int(np.argmin(d2))], dtype=np.float64)
+
+    def _gap_bearing(
+        self, pose: Pose, cur_floor: np.ndarray, gap_xy: np.ndarray | None
+    ) -> tuple[float, float] | None:
+        """(distance, signed bearing°) to ``gap_xy`` in the agent frame (+ = right)."""
+        if gap_xy is None:
+            return None
+        fwd2 = floor_xy(pose.heading(self.up_axis), self.up_axis)[0]
+        n2 = float(np.linalg.norm(fwd2))
+        fwd2 = np.array([1.0, 0.0]) if n2 < 1e-9 else fwd2 / n2
+        right2 = np.array([fwd2[1], -fwd2[0]])
+        v = gap_xy - cur_floor
+        ahead = float(v @ fwd2)
+        right = float(v @ right2)
+        return (float(np.hypot(ahead, right)), float(np.degrees(np.arctan2(right, ahead))))
 
     def _density_background(self, current: Pose, size: int, span: float) -> Image.Image:
         """Create the map background with density heatmap, rotated to body frame."""
@@ -312,7 +377,12 @@ class ObservationBuilder:
         return max(float(np.linalg.norm(floor_extent)), 1e-9)
 
     def _body_frame_map(
-        self, coverage: CoverageState, current: Pose, trail: list[Pose]
+        self,
+        coverage: CoverageState,
+        current: Pose,
+        trail: list[Pose],
+        *,
+        gap_xy: np.ndarray | None = None,
     ) -> np.ndarray:
         size = self.map_size
         span = self._map_span(coverage)
@@ -349,6 +419,17 @@ class ObservationBuilder:
         if len(trail) >= 2:
             line = [to_pixel(floor_xy(p.position, self.up_axis)[0]) for p in trail]
             draw.line(line, fill=(245, 190, 40), width=max(3, size // 170))
+
+        # Nearest reconstruction gap: a magenta diamond, clamped to the panel edge
+        # when it lies outside the view so it always points the way to the hole.
+        if gap_xy is not None:
+            gx, gy = to_pixel(gap_xy)
+            m = max(6, size // 64)
+            gx = float(np.clip(gx, m, size - m))
+            gy = float(np.clip(gy, m, size - m))
+            draw.polygon(
+                ((gx, gy - m), (gx + m, gy), (gx, gy + m), (gx - m, gy)), fill=(230, 70, 230)
+            )
 
         arrow_len = size / 6.0
         draw.line(
