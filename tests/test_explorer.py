@@ -302,6 +302,19 @@ def test_action_chunking_requeries_when_plan_exhausted() -> None:
     assert vlm.calls == 3
 
 
+def test_marks_are_deduped_by_coverage_radius() -> None:
+    explorer = _explorer([Action.STOP])  # coverage_radius = 1.0
+    result = WalkResult(walk_id="w")
+    assert explorer._record_mark(
+        Pose(position=np.array([5.0, 0.0, 5.0])), result, walk_id="w", step=1, auto=False
+    )
+    # a second mark within the coverage radius of the first is skipped
+    assert not explorer._record_mark(
+        Pose(position=np.array([5.3, 0.0, 5.0])), result, walk_id="w", step=2, auto=True
+    )
+    assert len(result.marks) == 1
+
+
 def test_follow_terrain_sets_camera_above_local_ground() -> None:
     means = np.array([[5.0, 0.0, 5.0], [5.0, 1.0, 5.0], [5.0, 2.0, 5.0]])  # ground near (5,5)
     hf = build_height_field(means, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)

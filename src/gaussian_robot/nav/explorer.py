@@ -195,11 +195,17 @@ class Explorer:
 
     def _record_mark(
         self, pose: Pose, result: WalkResult, *, walk_id: str, step: int, auto: bool
-    ) -> None:
-        """Add ``pose`` to the deliverable marks and emit a MarkEvent."""
+    ) -> bool:
+        """Add ``pose`` to the deliverable marks and emit a MarkEvent (deduped).
+
+        Skips (returns False) when within ``coverage_radius`` of an existing mark, so
+        neither the VLM nor the auto-marker piles several marks on the same spot.
+        """
+        floor = floor_xy(pose.position, self.scene.up_axis)[0]
+        if any(float(np.linalg.norm(floor - m)) < self.coverage_radius for m in self._mark_floor):
+            return False
         self._marks_total += 1
         result.marks.append(pose)
-        floor = floor_xy(pose.position, self.scene.up_axis)[0]
         self._mark_floor.append(floor)
         if self.event_sink is not None:
             self.event_sink(
@@ -207,6 +213,7 @@ class Explorer:
                     walk_id=walk_id, step=step, floor=floor, count=self._marks_total, auto=auto
                 )
             )
+        return True
 
     def _mark_step(
         self,
@@ -247,9 +254,6 @@ class Explorer:
         dist, bearing = gap
         if dist > self.coverage_radius * 1.5 or abs(bearing) > 45.0:
             return
-        floor = floor_xy(robot.pose.position, self.scene.up_axis)[0]
-        if any(float(np.linalg.norm(floor - m)) < self.coverage_radius for m in self._mark_floor):
-            return  # already marked a nearby fill-in pose
         self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=True)
 
     def _render_tween(
