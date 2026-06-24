@@ -260,6 +260,16 @@ function drawWorld(ctx, sampled, trail, pose){
   ctx.textBaseline="alphabetic";
 }
 
+let rgbTimer=null;
+function playRgb(frames){
+  if(rgbTimer){ clearInterval(rgbTimer); rgbTimer=null; }
+  const img=document.getElementById("rgb");
+  if(!frames.length) return;
+  if(frames.length===1){ img.src=frames[0]; return; }
+  let i=0;
+  rgbTimer=setInterval(()=>{ img.src=frames[i++];
+    if(i>=frames.length){ clearInterval(rgbTimer); rgbTimer=null; } }, 45);
+}
 let animTimer=null;
 async function testForward(){
   if(animTimer){ clearInterval(animTimer); animTimer=null; }
@@ -349,7 +359,7 @@ async function run(endpoint){
     if(m.type==="error"){ setStatus("error: "+m.message); setChips({status:"error"}); stream.close(); stream=null;
       stepping=false; document.getElementById("btn-next").disabled=true; return; }
     if(m.type==="step"){
-      if(m.panels.rgb) document.getElementById("rgb").src=m.panels.rgb;
+      if(m.panels.rgb) playRgb([...(m.tween||[]), m.panels.rgb]);
       if(m.panels.depth) document.getElementById("depth").src=m.panels.depth;
       if(m.panels.confidence) document.getElementById("confidence").src=m.panels.confidence;
       if(m.panels.map) document.getElementById("body-map").src=m.panels.map;

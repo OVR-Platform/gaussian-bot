@@ -82,6 +82,12 @@ class RunConfig(BaseModel):
         ge=1,
         description="Number of walk seeds. Fewer = budget spent exploring deeply, not restarting.",
     )
+    live_tween_frames: int = Field(
+        default=6,
+        ge=0,
+        description="Interpolated RGB frames rendered between views to smooth the live "
+        "dashboard motion. 0 disables. Each frame is an extra render per step.",
+    )
     map_size: int = Field(default=512, ge=64)
     map_span: float | None = Field(
         default=None,

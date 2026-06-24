@@ -34,7 +34,7 @@ from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
 from gaussian_robot.config import RunConfig
 from gaussian_robot.filters.pose_filters import FilteredPose, filter_poses
 from gaussian_robot.metrics.coverage import CoverageState, PoseSample
-from gaussian_robot.nav.action import ActionSpace
+from gaussian_robot.nav.action import ActionSpace, interpolate_pose, slerp_rotation
 from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
 from gaussian_robot.nav.observation import ObservationBuilder, frontier_floor_positions
 from gaussian_robot.nav.stop import (
@@ -293,25 +293,10 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
     return {"frames": frames, "ok": True, "step_size": space.step, "n_steps": n_steps}
 
 
-def _rotation_geodesic(r0: np.ndarray, r1: np.ndarray, t: float) -> np.ndarray:
-    """Interpolate two world->camera rotations along the SO(3) geodesic (slerp).
-
-    Uses the same world-frame composition as ``apply_action`` (``R = Rw @ R0``):
-    the relative world rotation ``r1 @ r0.T`` is reduced to axis-angle and applied
-    by a fraction ``t``. Robust for the small per-step rotations a walk makes.
-    """
-    from gaussian_robot.nav.action import _rotation_about_axis  # noqa: PLC0415
-
-    rel = r1 @ r0.T
-    cos = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
-    theta = math.acos(cos)
-    if theta < 1e-6:
-        return r0.copy()
-    axis = np.array(
-        [rel[2, 1] - rel[1, 2], rel[0, 2] - rel[2, 0], rel[1, 0] - rel[0, 1]], dtype=np.float64
-    ) / (2.0 * math.sin(theta))
-    interpolated: np.ndarray = _rotation_about_axis(axis, t * theta) @ r0
-    return interpolated
+# Pose interpolation lives in nav.action (shared with the live tween in the explorer);
+# kept under the old names here for the movie helpers and their tests.
+_rotation_geodesic = slerp_rotation
+_interp_pose = interpolate_pose
 
 
 def interpolate_walk_poses(poses: list[Pose], per_segment: int) -> list[Pose]:
@@ -333,14 +318,6 @@ def interpolate_walk_poses(poses: list[Pose], per_segment: int) -> list[Pose]:
             out.append(Pose(position=pos, rotation=rot))
     out.append(poses[-1])
     return out
-
-
-def _interp_pose(a: Pose, b: Pose, t: float) -> Pose:
-    """Pose between ``a`` and ``b``: linear position, slerped orientation."""
-    return Pose(
-        position=a.position * (1 - t) + b.position * t,
-        rotation=_rotation_geodesic(a.rotation, b.rotation, t),
-    )
 
 
 def _movie_frame_plan(
@@ -825,6 +802,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         session_policies=session_policies,
         max_steps=config.max_steps,
         mark_target=config.pose_target,
+        tween_frames=config.live_tween_frames,
     )
     seed_origin = _best_origin(renderer, up_axis, bmin, bmax)
 

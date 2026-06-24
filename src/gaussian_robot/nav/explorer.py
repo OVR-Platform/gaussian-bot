@@ -32,7 +32,13 @@ from gaussian_robot.metrics.coverage import (
     floor_xy,
     pose_space_coverage,
 )
-from gaussian_robot.nav.action import Action, ActionSpace, apply_action, capped_forward_step
+from gaussian_robot.nav.action import (
+    Action,
+    ActionSpace,
+    apply_action,
+    capped_forward_step,
+    interpolate_pose,
+)
 from gaussian_robot.nav.observation import (
     ObservationBuilder,
     frontier_floor_positions,
@@ -48,7 +54,7 @@ from gaussian_robot.nav.stop import (
     walk_stop_reason,
 )
 from gaussian_robot.render.base import Renderer, RenderResult
-from gaussian_robot.render.camera import Pose
+from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose
 from gaussian_robot.splat.scene import SplatScene
 from gaussian_robot.vlm.client import Decision, VLMClient
 from gaussian_robot.vlm.observation import Observation
@@ -151,6 +157,7 @@ class Explorer:
     event_sink: EventSink | None = None
     mark_target: int = 0  # informational target shown to the VLM in [state]
     auto_mark: bool = True  # auto-mark a pose when well-positioned at a frontier
+    tween_frames: int = 0  # interpolated RGB frames rendered between views (live smoothing)
     _marks_total: int = 0  # running count of marked fill-in poses this session
     _mark_floor: list[np.ndarray] = field(default_factory=list)  # floor pos of marks (dedup)
 
@@ -241,6 +248,44 @@ class Explorer:
             return  # already marked a nearby fill-in pose
         self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=True)
 
+    def _render_tween(
+        self, a: Pose | None, b: Pose, intrinsics: CameraIntrinsics
+    ) -> list[np.ndarray]:
+        """Render ``tween_frames`` interpolated RGB views between ``a`` and ``b`` (exclusive).
+
+        Lets the dashboard play the camera *gliding* from the previously shown view to
+        the current one instead of cutting between them. Empty when disabled or no motion.
+        """
+        n = self.tween_frames
+        if n <= 0 or a is None:
+            return []
+        if np.allclose(a.position, b.position) and np.allclose(a.rotation, b.rotation):
+            return []
+        frames: list[np.ndarray] = []
+        for k in range(1, n + 1):
+            p = interpolate_pose(a, b, k / (n + 1))  # interior points; endpoint b is the main view
+            frames.append(self.renderer.render(Camera(pose=p, intrinsics=intrinsics)).rgb)
+        return frames
+
+    def _commit_move(
+        self,
+        robot: Robot,
+        next_pose: Pose,
+        render: RenderResult,
+        coverage: CoverageState,
+        trail: list[Pose],
+        result: WalkResult,
+        *,
+        walk_id: str,
+        step: int,
+    ) -> None:
+        """Apply a committed move: advance the robot, record coverage/trail, maybe auto-mark."""
+        robot.move(next_pose)
+        conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
+        coverage.add_pose(next_pose, walk_id=walk_id, confidence=conf)
+        trail.append(next_pose)
+        self._maybe_auto_mark(robot, result, walk_id=walk_id, step=step)
+
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, walk_id: str = ""
     ) -> WalkResult:
@@ -261,6 +306,7 @@ class Explorer:
 
         action_history: list[str] = []
         stop_reason = "step_budget"
+        prev_view_pose: Pose | None = None  # last view shown, for the live tween
         for step_idx in range(self.max_steps):
             if step_idx == 0:
                 scene_description = self._describe_step(
@@ -269,6 +315,8 @@ class Explorer:
                 continue
 
             camera = robot.camera()
+            tween = self._render_tween(prev_view_pose, camera.pose, camera.intrinsics)
+            prev_view_pose = camera.pose
             cov = floor_coverage(coverage, radius=self.coverage_radius)
             observation, render = self.observation_builder.build(
                 camera,
@@ -340,11 +388,16 @@ class Explorer:
             )
 
             if action is not Action.STOP and not degenerate and not blocked:
-                robot.move(next_pose)
-                conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
-                coverage.add_pose(next_pose, walk_id=walk_id, confidence=conf)
-                trail.append(next_pose)
-                self._maybe_auto_mark(robot, result, walk_id=walk_id, step=step_idx + 1)
+                self._commit_move(
+                    robot,
+                    next_pose,
+                    render,
+                    coverage,
+                    trail,
+                    result,
+                    walk_id=walk_id,
+                    step=step_idx + 1,
+                )
 
             self._emit_step(
                 walk_id,
@@ -358,6 +411,7 @@ class Explorer:
                 coverage,
                 trail,
                 blocked=blocked,
+                tween=tween,
             )
 
             reason = walk_stop_reason(self.walk_policies)
@@ -456,6 +510,7 @@ class Explorer:
         trail: list[Pose],
         *,
         blocked: bool = False,
+        tween: list[np.ndarray] | None = None,
     ) -> None:
         if self.event_sink is None:
             return
@@ -477,6 +532,7 @@ class Explorer:
                 sampled_floor=coverage.floor_positions(),
                 trail_floor=_floor_array(trail, self.scene.up_axis),
                 blocked=blocked,
+                tween_rgb=tween or [],
             )
         )
 

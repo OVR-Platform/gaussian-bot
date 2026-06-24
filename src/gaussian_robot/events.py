@@ -8,7 +8,7 @@ receives one :data:`SessionEvent` at a time.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -50,6 +50,9 @@ class StepEvent:
     sampled_floor: np.ndarray  # (N, 2)
     trail_floor: np.ndarray  # (M, 2)
     blocked: bool = False  # a FORWARD step halted short of an obstacle (no move committed)
+    tween_rgb: list[np.ndarray] = field(
+        default_factory=list
+    )  # interpolated RGB frames into this view
 
 
 @dataclass(frozen=True)

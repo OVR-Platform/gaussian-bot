@@ -100,6 +100,33 @@ def _rotation_about_axis(axis: np.ndarray, angle: float) -> np.ndarray:
     )
 
 
+def slerp_rotation(r0: np.ndarray, r1: np.ndarray, t: float) -> np.ndarray:
+    """Geodesic interpolation between two world->camera rotations (SO(3) slerp).
+
+    Uses the same world-frame composition as :func:`apply_action` (``R = Rw @ R0``):
+    the relative world rotation ``r1 @ r0.T`` is reduced to axis-angle and applied by
+    a fraction ``t``. Robust for the small rotations a walk/tween makes.
+    """
+    rel = r1 @ r0.T
+    cos = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
+    theta = float(np.arccos(cos))
+    if theta < 1e-6:
+        return r0.copy()
+    axis = np.array(
+        [rel[2, 1] - rel[1, 2], rel[0, 2] - rel[2, 0], rel[1, 0] - rel[0, 1]], dtype=np.float64
+    ) / (2.0 * np.sin(theta))
+    out: np.ndarray = _rotation_about_axis(axis, t * theta) @ r0
+    return out
+
+
+def interpolate_pose(a: Pose, b: Pose, t: float) -> Pose:
+    """Pose between ``a`` and ``b``: linear position, slerped orientation."""
+    return Pose(
+        position=a.position * (1 - t) + b.position * t,
+        rotation=slerp_rotation(a.rotation, b.rotation, t),
+    )
+
+
 def apply_action(
     pose: Pose,
     action: Action,

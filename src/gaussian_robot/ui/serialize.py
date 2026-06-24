@@ -48,6 +48,7 @@ def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return
             "coverage_floor": event.coverage_floor,
             "coverage_pose_space": event.coverage_pose_space,
             "panels": panels,
+            "tween": [jpeg_data_url(f) for f in event.tween_rgb],
             "sampled": event.sampled_floor.tolist(),
             "trail": event.trail_floor.tolist(),
         }
