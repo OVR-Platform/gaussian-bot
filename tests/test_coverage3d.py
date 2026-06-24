@@ -44,6 +44,30 @@ def test_no_cameras_makes_all_occupied_gaps() -> None:
     assert int(cov.gap_mask.sum()) == int(cov.occupied.sum()) == 2
 
 
+def test_interior_of_solid_block_is_not_a_gap() -> None:
+    # A 3x3x3 solid block of occupied voxels with no cameras: only the exposed
+    # surface counts as a gap; the single fully-enclosed centre voxel does not.
+    centres = np.array(
+        [[x + 0.5, y + 0.5, z + 0.5] for x in (2, 3, 4) for y in (2, 3, 4) for z in (2, 3, 4)],
+        dtype=np.float64,
+    )
+    means = np.repeat(centres, 2, axis=0)
+    cov = build_coverage3d(
+        means,
+        np.ones(means.shape[0]),
+        np.empty((0, 3)),
+        np.empty((0, 3, 3)),
+        np.empty(0),
+        np.empty(0),
+        _LO,
+        _HI,
+        grid=8,
+    )
+    assert int(cov.occupied.sum()) == 27  # the full 3x3x3 block
+    assert cov.occupied[3, 3, 3] and not cov.gap_mask[3, 3, 3]  # enclosed centre is not a gap
+    assert int(cov.gap_mask.sum()) == 26  # only the 26 exposed-surface voxels
+
+
 def test_gap_centers_and_nearest() -> None:
     means, opac = _two_voxel_means()
     cam_pos = np.array([[4.5, 4.5, 0.2]])

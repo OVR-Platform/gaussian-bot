@@ -31,6 +31,10 @@ PAGE_HTML = """<!doctype html>
                  background: rgba(0,0,0,.3); padding: 8px; border-radius: 6px; }
   canvas#world-map { width: 100%; max-width: 460px; aspect-ratio: 1/1; border-radius: 6px;
                      background: #111; display: block; }
+  #map-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; max-width: 460px;
+                margin: 6px 0 0; font-size: 11px; color: #bbb; }
+  #map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  #map-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
   @media (max-width: 900px) {
     body { grid-template-columns: 1fr; }
     .views { grid-template-columns: 1fr; }
@@ -107,6 +111,7 @@ PAGE_HTML = """<!doctype html>
   </div>
   <h2>Global coverage (world frame)</h2>
   <canvas id="world-map" width="600" height="600"></canvas>
+  <div id="map-legend"></div>
   <h2>Walk replay (interpolated fly-through)</h2>
   <div class="row">
     <select id="movie-walk" style="flex:2"></select>
@@ -216,6 +221,11 @@ let SEEDS = [], SEED_KINDS = [], MARKS = [], FRONTIERS = [], GAPS = [], LAST_STE
 const seedColor = kind => (kind === "capture" ? "#f5be28" : "#e0662a");  // amber=real, orange=synthetic
 const walkIndex = wid => { const n = String(wid).match(/\\d+/); return n ? parseInt(n[0], 10) : -1; };
 const walkKind = wid => SEED_KINDS[walkIndex(wid)] || "?";
+const MAP_LEGEND=[["#ff4fa3","3D gap (unseen volume — brighter = more)"],["#50c8d2","recon. frontier"],["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"],["#c050ff","marked (fill-in)"]];
+function renderLegend(){
+  const el=document.getElementById("map-legend"); if(!el) return;
+  el.innerHTML=MAP_LEGEND.map(([c,t])=>`<span><i style="background:${c}"></i>${t}</span>`).join("");
+}
 function drawWorld(ctx, sampled, trail, pose){
   if(!BOUNDS) return;
   const [a,b] = floorAxes(UP);
@@ -226,13 +236,23 @@ function drawWorld(ctx, sampled, trail, pose){
   ctx.fillStyle="#181818"; ctx.fillRect(0,0,W,H);
   ctx.strokeStyle="#666"; ctx.lineWidth=1;
   ctx.strokeRect(tx(lo[0]),ty(hi[1]),tx(hi[0])-tx(lo[0]),ty(lo[1])-ty(hi[1]));
-  // reconstruction frontiers (static gaps to fill): faint cyan squares, drawn underneath
+  // Tier-3 3D coverage gaps: occupied-but-unseen voxels projected onto the floor,
+  // shown as a concentration heatmap (brighter = more unseen volume stacked in that
+  // column — facades, multi-floor interiors, roofs). A heatmap, not per-voxel squares,
+  // so it reads as "where the uncovered mass is" instead of tiling the whole floor.
+  if(GAPS && GAPS.length){
+    const NB=36, cnt=new Float32Array(NB*NB); let mx=0;
+    const bin=(v,l,h)=>Math.min(NB-1,Math.max(0,Math.floor((v-l)/(h-l)*NB)));
+    GAPS.forEach(p=>{ const k=bin(p[1],lo[1],hi[1])*NB+bin(p[0],lo[0],hi[0]);
+      cnt[k]++; if(cnt[k]>mx) mx=cnt[k]; });
+    const cw=(W-2*pad)/NB, ch=(H-2*pad)/NB;
+    for(let j=0;j<NB;j++) for(let i=0;i<NB;i++){ const v=cnt[j*NB+i]; if(!v) continue;
+      ctx.fillStyle="rgba(255,79,163,"+(0.12+0.55*(v/mx)).toFixed(3)+")";
+      ctx.fillRect(pad+i*cw, pad+(NB-1-j)*ch, cw+0.6, ch+0.6); }
+  }
+  // reconstruction frontiers (static gaps to fill): faint cyan squares
   ctx.fillStyle="rgba(80,200,210,0.45)";
   (FRONTIERS||[]).forEach(p=>{ ctx.fillRect(tx(p[0])-1.5, ty(p[1])-1.5, 3, 3); });
-  // Tier-3 3D coverage gaps (occupied-but-unseen voxels: roofs/floors/behind-buildings),
-  // floor-projected. Hot-pink hollow squares — the aerial survey targets these.
-  ctx.strokeStyle="rgba(255,79,163,0.85)"; ctx.lineWidth=1.5;
-  (GAPS||[]).forEach(p=>{ ctx.strokeRect(tx(p[0])-2.5, ty(p[1])-2.5, 5, 5); });
   ctx.fillStyle="#285ad0";
   (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[0]),ty(p[1]),2,0,7); ctx.fill(); });
   // seeds: where walks start from. Amber ring = real capture pose, orange = synthetic fallback.
@@ -250,11 +270,6 @@ function drawWorld(ctx, sampled, trail, pose){
     ctx.beginPath(); ctx.moveTo(x,y-s); ctx.lineTo(x+s,y); ctx.lineTo(x,y+s); ctx.lineTo(x-s,y);
     ctx.closePath(); ctx.fill(); });
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
-  // legend
-  ctx.font="11px sans-serif"; ctx.textBaseline="middle";
-  const items=[["#50c8d2","gap (frontier)"],["#ff4fa3","gap (3D: roofs/floors)"],["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"],["#c050ff","marked (fill-in)"]];
-  items.forEach(([c,t],i)=>{ const y=14+i*16; ctx.fillStyle=c;
-    ctx.beginPath(); ctx.arc(14,y,4,0,7); ctx.fill(); ctx.fillStyle="#bbb"; ctx.fillText(t,24,y); });
   // world axis labels: horizontal = +floor axis a, vertical = +floor axis b (up axis is out of plane)
   ctx.fillStyle="#9aa"; ctx.font="12px sans-serif";
   ctx.fillText("+"+AXIS_NAME(a)+" \\u2192", W-58, H-12);
@@ -326,7 +341,7 @@ async function run(endpoint){
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
       SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || []; MARKS = []; LAST_STEP = null;
-      FRONTIERS = m.frontiers || []; GAPS = m.gaps || [];
+      FRONTIERS = m.frontiers || []; GAPS = m.gaps || []; renderLegend();
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
       resetMovies();

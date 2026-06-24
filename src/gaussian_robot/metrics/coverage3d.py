@@ -5,8 +5,10 @@ A voxel **occupancy** grid is built from the gaussian means (opacity-weighted). 
 and marking the *first* occupied voxel each ray hits — i.e. the surface actually visible
 to that camera, so occlusion is handled (a roof behind a wall is not "seen through" it).
 
-``occupied & ~seen`` are the real 3D gaps — roofs, upper floors, behind-building pockets —
-that the 2D floor-density frontier is blind to. These drive seeding, the aerial survey,
+Exposed-surface voxels that are ``occupied & ~seen`` are the real 3D gaps — roofs, upper
+floors, behind-building pockets — that the 2D floor-density frontier is blind to. (Interior
+voxels of solid geometry are excluded: they are unseen only because they sit behind a
+surface, not because they are uncovered.) These drive seeding, the aerial survey,
 auto-marking and the deliverable toward genuinely under-observed regions.
 """
 
@@ -27,9 +29,35 @@ class Coverage3D:
     hi: np.ndarray  # (3,) grid max corner
 
     @property
+    def surface(self) -> np.ndarray:
+        """Occupied voxels exposed to empty space on at least one face.
+
+        The occupancy volume is solid, so its *interior* voxels are occupied-but-unseen
+        purely because they sit behind a surface — not because they are an uncovered
+        region. Restricting gaps to the exposed surface (and the grid boundary, where the
+        outside is implicitly empty) keeps only voxels a camera could actually have seen.
+        """
+        occ = self.occupied
+        exposed = np.zeros_like(occ)
+        not_occ = ~occ
+        exposed[:-1] |= not_occ[1:]
+        exposed[1:] |= not_occ[:-1]
+        exposed[:, :-1] |= not_occ[:, 1:]
+        exposed[:, 1:] |= not_occ[:, :-1]
+        exposed[:, :, :-1] |= not_occ[:, :, 1:]
+        exposed[:, :, 1:] |= not_occ[:, :, :-1]
+        for axis in range(3):  # grid faces border empty space outside the volume
+            exposed = np.swapaxes(exposed, 0, axis)
+            exposed[0] = True
+            exposed[-1] = True
+            exposed = np.swapaxes(exposed, 0, axis)
+        surface: np.ndarray = occ & exposed
+        return surface
+
+    @property
     def gap_mask(self) -> np.ndarray:
-        """Occupied voxels that no camera saw — the 3D coverage gaps."""
-        mask: np.ndarray = self.occupied & ~self.seen
+        """Exposed-surface voxels that no camera saw — the real 3D coverage gaps."""
+        mask: np.ndarray = self.surface & ~self.seen
         return mask
 
     def gap_centers(self) -> np.ndarray:
