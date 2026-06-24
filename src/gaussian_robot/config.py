@@ -89,6 +89,12 @@ class RunConfig(BaseModel):
         ge=1,
         description="Number of walk seeds. Fewer = budget spent exploring deeply, not restarting.",
     )
+    coverage_3d: bool = Field(
+        default=True,
+        description="Build a Tier-3 3D coverage grid (voxel occupancy + capture-camera "
+        "frustum raycast) to find occupied-but-unseen regions (roofs/floors/behind-buildings) "
+        "and aim the aerial survey at them. Falls back to tallest-geometry when off/unavailable.",
+    )
     aerial_survey: bool = Field(
         default=True,
         description="Add one extra walk that starts high above the tallest geometry looking "

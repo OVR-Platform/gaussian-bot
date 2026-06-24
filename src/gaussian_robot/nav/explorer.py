@@ -161,6 +161,7 @@ class Explorer:
     tween_frames: int = 0  # interpolated RGB frames rendered between views (live smoothing)
     actions_per_query: int = 1  # action chunking: max actions the VLM plans per query
     height_field: HeightField | None = None  # ground heights for terrain-following
+    gap_floor: np.ndarray | None = None  # (K, 2) floor-projected 3D coverage gaps, for the UI
     _marks_total: int = 0  # running count of marked fill-in poses this session
     _mark_pos: list[np.ndarray] = field(default_factory=list)  # 3D positions of marks (dedup)
     _eye_offset: float | None = None  # camera height above local ground for this walk
@@ -541,6 +542,11 @@ class Explorer:
                     seed_kinds=[s.kind for s in seeds],
                     requested_seeds=len(seeds) if requested_seeds is None else requested_seeds,
                     frontier_floor=frontier_floor_positions(self.renderer),
+                    gap_floor=(
+                        self.gap_floor
+                        if self.gap_floor is not None
+                        else np.empty((0, 2), dtype=np.float64)
+                    ),
                 )
             )
 

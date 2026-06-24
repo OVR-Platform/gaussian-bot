@@ -216,6 +216,7 @@ def test_blocked_forward_does_not_accumulate_coverage() -> None:
 def test_session_end_reason_is_specific() -> None:
     events: list[object] = []
     explorer = _explorer([Action.FORWARD], session_policies=[SeedExhaustion()], max_steps=2)
+    explorer.gap_floor = np.array([[2.0, 3.0], [4.0, 5.0]])  # Tier-3 3D gaps surfaced to the UI
     explorer.event_sink = events.append
     seeds = [
         SeedPose(pose=Pose(position=np.array([1.0, 0.0, 1.0])), kind="capture"),
@@ -228,6 +229,7 @@ def test_session_end_reason_is_specific() -> None:
     assert start.seed_floor.shape == (2, 2)  # both seeds' floor positions surfaced
     assert start.seed_kinds == ["capture", "origin_fallback"]  # provenance surfaced
     assert start.total_seeds == 2 and start.requested_seeds == 4  # rejections visible
+    assert start.gap_floor.shape == (2, 2)  # 3D coverage gaps carried through to the event
 
 
 def test_mark_records_pose_and_emits_event_without_moving() -> None:

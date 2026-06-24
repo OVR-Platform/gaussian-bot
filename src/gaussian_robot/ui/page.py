@@ -212,7 +212,7 @@ function setStatus(t){ document.getElementById("status").textContent = t; }
 function setChips(o){ document.getElementById("chips").innerHTML =
   Object.entries(o).map(([k,v])=>`<span class="chip"><b>${k}</b> ${v}</span>`).join(""); }
 
-let SEEDS = [], SEED_KINDS = [], MARKS = [], FRONTIERS = [], LAST_STEP = null;
+let SEEDS = [], SEED_KINDS = [], MARKS = [], FRONTIERS = [], GAPS = [], LAST_STEP = null;
 const seedColor = kind => (kind === "capture" ? "#f5be28" : "#e0662a");  // amber=real, orange=synthetic
 const walkIndex = wid => { const n = String(wid).match(/\\d+/); return n ? parseInt(n[0], 10) : -1; };
 const walkKind = wid => SEED_KINDS[walkIndex(wid)] || "?";
@@ -229,6 +229,10 @@ function drawWorld(ctx, sampled, trail, pose){
   // reconstruction frontiers (static gaps to fill): faint cyan squares, drawn underneath
   ctx.fillStyle="rgba(80,200,210,0.45)";
   (FRONTIERS||[]).forEach(p=>{ ctx.fillRect(tx(p[0])-1.5, ty(p[1])-1.5, 3, 3); });
+  // Tier-3 3D coverage gaps (occupied-but-unseen voxels: roofs/floors/behind-buildings),
+  // floor-projected. Hot-pink hollow squares — the aerial survey targets these.
+  ctx.strokeStyle="rgba(255,79,163,0.85)"; ctx.lineWidth=1.5;
+  (GAPS||[]).forEach(p=>{ ctx.strokeRect(tx(p[0])-2.5, ty(p[1])-2.5, 5, 5); });
   ctx.fillStyle="#285ad0";
   (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[0]),ty(p[1]),2,0,7); ctx.fill(); });
   // seeds: where walks start from. Amber ring = real capture pose, orange = synthetic fallback.
@@ -248,7 +252,7 @@ function drawWorld(ctx, sampled, trail, pose){
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
   // legend
   ctx.font="11px sans-serif"; ctx.textBaseline="middle";
-  const items=[["#50c8d2","gap (frontier)"],["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"],["#c050ff","marked (fill-in)"]];
+  const items=[["#50c8d2","gap (frontier)"],["#ff4fa3","gap (3D: roofs/floors)"],["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"],["#c050ff","marked (fill-in)"]];
   items.forEach(([c,t],i)=>{ const y=14+i*16; ctx.fillStyle=c;
     ctx.beginPath(); ctx.arc(14,y,4,0,7); ctx.fill(); ctx.fillStyle="#bbb"; ctx.fillText(t,24,y); });
   // world axis labels: horizontal = +floor axis a, vertical = +floor axis b (up axis is out of plane)
@@ -322,7 +326,7 @@ async function run(endpoint){
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
       SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || []; MARKS = []; LAST_STEP = null;
-      FRONTIERS = m.frontiers || [];
+      FRONTIERS = m.frontiers || []; GAPS = m.gaps || [];
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
       resetMovies();

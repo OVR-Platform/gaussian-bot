@@ -31,6 +31,7 @@ def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return
             "seeds": event.seed_floor.tolist(),
             "seed_kinds": event.seed_kinds,
             "frontiers": event.frontier_floor.tolist(),
+            "gaps": event.gap_floor.tolist(),
         }
     if isinstance(event, StepEvent):
         panels = {label: jpeg_data_url(img) for label, img in event.observation.panels}

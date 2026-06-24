@@ -33,7 +33,8 @@ import numpy as np
 from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
 from gaussian_robot.config import RunConfig
 from gaussian_robot.filters.pose_filters import FilteredPose, filter_poses
-from gaussian_robot.metrics.coverage import CoverageState, PoseSample
+from gaussian_robot.metrics.coverage import CoverageState, PoseSample, floor_xy
+from gaussian_robot.metrics.coverage3d import Coverage3D, build_coverage3d
 from gaussian_robot.nav.action import (
     Action,
     ActionSpace,
@@ -743,23 +744,64 @@ def assemble_deliverable(
     )
 
 
-def _aerial_seed(
+def _build_coverage3d(
     renderer: Renderer,
     means: np.ndarray,
+    capture_poses: list[Pose],
+    config: RunConfig,
+    bmin: np.ndarray,
+    bmax: np.ndarray,
+) -> Coverage3D | None:
+    """Build the Tier-3 3D coverage from the splat + capture cameras, or None."""
+    from gaussian_robot.splat.capture_poses import (  # noqa: PLC0415
+        discover_capture_poses,
+        representative_fov,
+    )
+
+    cloud = getattr(renderer, "cloud", None)
+    opac = getattr(cloud, "opacities", None)
+    if opac is None or not capture_poses:
+        return None
+    opac_np = np.asarray(opac.detach().cpu()) if hasattr(opac, "detach") else np.asarray(opac)
+    cam_pos = np.array([p.position for p in capture_poses], dtype=np.float64)
+    cam_rot = np.array([p.rotation for p in capture_poses], dtype=np.float64)
+    source = config.poses_path or (
+        discover_capture_poses(config.ply_path) if config.ply_path else None
+    )
+    hfov, vfov = representative_fov(source)
+    m = len(capture_poses)
+    db = getattr(cloud, "density_bounds", None)
+    lo3, hi3 = db if db is not None else (bmin, bmax)
+    return build_coverage3d(
+        means,
+        opac_np.reshape(-1),
+        cam_pos,
+        cam_rot,
+        np.full(m, hfov),
+        np.full(m, vfov),
+        lo3,
+        hi3,
+    )
+
+
+def _aerial_seed(
+    renderer: Renderer,
+    points: np.ndarray,
     up_axis: str,
     bmin: np.ndarray,
     bmax: np.ndarray,
     space: ActionSpace,
 ) -> SeedPose | None:
-    """A walk seed high above the tallest geometry, pitched down to survey rooftops.
+    """A walk seed high above ``points``, pitched down to survey from above.
 
-    Flies to a vantage over the tallest structures (``aerial_target``) and looks ~60°
-    down toward the scene centre. Returns None on a flat scene or if the vantage looks
-    into the void. The walk then roams at altitude (terrain-follow keeps it aloft).
+    ``points`` are the geometry to survey over — the 3D coverage gaps when available
+    (so it targets genuinely unseen rooftops/structure), else all gaussian means.
+    Flies to a vantage over the tallest of them (``aerial_target``) looking ~60° down
+    toward the scene centre. None on a flat scene or if the vantage looks into the void.
     """
     from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
-    at = aerial_target(means, up_axis)
+    at = aerial_target(points, up_axis)
     if at is None:
         return None
     xz, survey_h = at
@@ -850,6 +892,18 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
     if config.terrain_follow and means_np is not None:
         height_field = build_height_field(means_np, up_axis, bmin, bmax)
 
+    # Tier-3 3D coverage: occupied-but-unseen voxels (roofs/floors/behind-buildings).
+    gap_centers = np.empty((0, 3), dtype=np.float64)
+    if config.coverage_3d and means_np is not None:
+        cov3d = _build_coverage3d(renderer, means_np, capture_poses, config, bmin, bmax)
+        if cov3d is not None:
+            gap_centers = cov3d.gap_centers()
+    gap_floor = (
+        floor_xy(gap_centers, up_axis)
+        if gap_centers.shape[0] > 0
+        else np.empty((0, 2), dtype=np.float64)
+    )
+
     explorer = Explorer(
         scene=scene,
         renderer=renderer,
@@ -864,6 +918,7 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         tween_frames=config.live_tween_frames,
         actions_per_query=config.actions_per_query,
         height_field=height_field,
+        gap_floor=gap_floor,
     )
     seed_origin = _best_origin(renderer, up_axis, bmin, bmax)
 
@@ -883,9 +938,12 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         renderer, candidates, num_seeds=config.num_seeds, step=space.step, strict=not seed_pool
     )
     if config.aerial_survey and means_np is not None:
-        aerial = _aerial_seed(renderer, means_np, up_axis, bmin, bmax, space)
+        # Survey over the 3D coverage gaps (unseen roofs/structure) when we have them,
+        # else over the tallest geometry.
+        survey_points = gap_centers if gap_centers.shape[0] > 0 else means_np
+        aerial = _aerial_seed(renderer, survey_points, up_axis, bmin, bmax, space)
         if aerial is not None:
-            seeds.append(aerial)  # one extra walk surveying rooftops from above
+            seeds.append(aerial)  # one extra walk surveying the gaps from above
 
     coverage = CoverageState.empty(up_axis, bmin, bmax)
     return explorer, seeds, coverage

@@ -24,6 +24,7 @@ the camera centre in world, ``Pose.rotation`` is the **world->camera** matrix
 from __future__ import annotations
 
 import json
+import math
 import struct
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from gaussian_robot.render.camera import Pose
 
 _CAMERAS_JSON = "cameras.json"
 _COLMAP_IMAGE_FILES = ("images.bin", "images.txt")
+_DEFAULT_FOV = (math.radians(70.0), math.radians(50.0))  # fallback (h, v) when intrinsics absent
 
 
 def _qvec_to_rotmat(qvec: np.ndarray) -> np.ndarray:
@@ -153,6 +155,38 @@ def _resolve_in_dir(directory: Path) -> Path | None:
             if f.is_file():
                 return f
     return None
+
+
+def representative_fov(source: str | Path | None) -> tuple[float, float]:
+    """A representative ``(hfov, vfov)`` (radians) for the capture rig.
+
+    Reads ``fx/fy/width/height`` from the first usable 3DGS ``cameras.json`` entry
+    (capture rigs are near-uniform). Falls back to a default for COLMAP/unknown
+    sources, which don't carry intrinsics here.
+    """
+    if source is None:
+        return _DEFAULT_FOV
+    p = Path(source)
+    if p.is_dir():
+        resolved = _resolve_in_dir(p)
+        if resolved is None:
+            return _DEFAULT_FOV
+        p = resolved
+    if not p.name.lower().endswith(".json"):
+        return _DEFAULT_FOV
+    try:
+        entries = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return _DEFAULT_FOV
+    for e in entries:
+        try:
+            fx, fy = float(e["fx"]), float(e["fy"])
+            w, h = float(e["width"]), float(e["height"])
+            if fx > 0 and fy > 0:
+                return 2.0 * math.atan(w / (2.0 * fx)), 2.0 * math.atan(h / (2.0 * fy))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return _DEFAULT_FOV
 
 
 def infer_up_axis(poses: list[Pose]) -> str | None:

@@ -30,6 +30,9 @@ class SessionStartEvent:
     seed_kinds: list[str]  # per-seed provenance: "capture" | "origin_fallback" | "density" | "grid"
     requested_seeds: int  # how many were asked for (may exceed total_seeds if some were rejected)
     frontier_floor: np.ndarray  # (K, 2) reconstruction-frontier cells (static gaps to fill)
+    gap_floor: np.ndarray = field(  # (K, 2) floor-projected Tier-3 3D coverage gaps (roofs/floors)
+        default_factory=lambda: np.empty((0, 2), dtype=np.float64)
+    )
 
 
 @dataclass(frozen=True)
