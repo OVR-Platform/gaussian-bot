@@ -12,7 +12,13 @@ from urllib.parse import parse_qs, urlparse
 from pydantic import ValidationError
 
 from gaussian_robot.config import load_config, save_config
-from gaussian_robot.events import SessionEvent, SessionStartEvent, StepEvent
+from gaussian_robot.events import (
+    MarkEvent,
+    SceneDescribeEvent,
+    SessionEvent,
+    SessionStartEvent,
+    StepEvent,
+)
 from gaussian_robot.render.camera import Pose
 from gaussian_robot.session import animate_forward, build_session, load_preview, render_walk_movie
 from gaussian_robot.ui.page import PAGE_HTML
@@ -23,9 +29,57 @@ _VLLM = VLLMServerProcess()
 _step_gate = threading.Event()
 _step_mode = False
 
-# Full per-walk pose trajectories (position + rotation) captured live from the
-# event stream, so the dashboard can replay an interpolated fly-through of any walk.
-_WALKS: dict[str, list[Pose]] = {}
+# Per-walk annotated timeline captured live from the event stream: each "shot" is a
+# pose plus a caption and a hold (frames to linger), so the dashboard can replay an
+# interpolated fly-through that narrates turns/describes and pauses on marks.
+_WALKS: dict[str, list[dict[str, Any]]] = {}
+_LAST_POSE: dict[str, Pose] = {}  # most recent stepped pose per walk (for mark/describe shots)
+_PENDING_DESC: dict[str, str] = {}  # a describe emitted before the first step
+
+_ACTION_LABEL = {
+    "forward": "▶ forward",
+    "back": "◀ back",
+    "turn_left": "↶ turn left",
+    "turn_right": "↷ turn right",
+    "look_up": "look up",
+    "look_down": "look down",
+    "move_up": "move up",
+    "move_down": "move down",
+}
+
+
+def _capture_event(event: SessionEvent) -> None:
+    """Accumulate the annotated per-walk timeline used by the replay movie."""
+    if isinstance(event, SessionStartEvent):
+        _WALKS.clear()
+        _LAST_POSE.clear()
+        _PENDING_DESC.clear()
+    elif isinstance(event, StepEvent):
+        label = _ACTION_LABEL.get(event.action.value, event.action.value)
+        if event.blocked:
+            label += " — blocked"
+        pending = _PENDING_DESC.pop(event.walk_id, "")
+        caption = f"DESCRIBE: {pending}\n{label}" if pending else label
+        hold = 16 if pending else 1
+        _WALKS.setdefault(event.walk_id, []).append(
+            {"pose": event.pose, "caption": caption, "hold": hold}
+        )
+        _LAST_POSE[event.walk_id] = event.pose
+    elif isinstance(event, MarkEvent):
+        pose = _LAST_POSE.get(event.walk_id)
+        if pose is not None:
+            _WALKS.setdefault(event.walk_id, []).append(
+                {"pose": pose, "caption": "★ MARK — fill-in pose", "hold": 14}
+            )
+    elif isinstance(event, SceneDescribeEvent):
+        text = event.description[:200]
+        pose = _LAST_POSE.get(event.walk_id)
+        if pose is None:
+            _PENDING_DESC[event.walk_id] = text
+        else:
+            _WALKS.setdefault(event.walk_id, []).append(
+                {"pose": pose, "caption": f"DESCRIBE: {text}", "hold": 18}
+            )
 
 
 def serve_dashboard(host: str, port: int, *, start_vllm: bool = False) -> None:
@@ -84,8 +138,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def _walk_movie(self, query: dict[str, list[str]]) -> None:
         walk_id = (query.get("walk") or [""])[0]
-        poses = _WALKS.get(walk_id)
-        if not poses:
+        shots = _WALKS.get(walk_id)
+        if not shots:
             self._send_json(
                 {"ok": False, "error": f"no frames recorded for {walk_id!r}", "frames": []},
                 status=HTTPStatus.NOT_FOUND,
@@ -93,7 +147,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         try:
             per = int((query.get("per") or ["8"])[0])
-            result = render_walk_movie(load_config(), poses, per_segment=max(1, per))
+            result = render_walk_movie(load_config(), shots, per_segment=max(1, per))
             result["walk_id"] = walk_id
             self._send_json(result)
         except Exception as exc:  # noqa: BLE001
@@ -154,11 +208,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         def emit(event: SessionEvent) -> None:
-            # Capture full poses (with rotation) for interpolated walk replay.
-            if isinstance(event, SessionStartEvent):
-                _WALKS.clear()
-            elif isinstance(event, StepEvent):
-                _WALKS.setdefault(event.walk_id, []).append(event.pose)
+            _capture_event(event)  # build the annotated timeline for walk replay
             self._write_sse(event_to_message(event))
             if _step_mode and isinstance(event, StepEvent):
                 _step_gate.clear()

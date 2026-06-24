@@ -6,7 +6,7 @@ import numpy as np
 
 from gaussian_robot.nav.action import _rotation_about_axis
 from gaussian_robot.render.camera import Pose
-from gaussian_robot.session import _rotation_geodesic, interpolate_walk_poses
+from gaussian_robot.session import _movie_frame_plan, _rotation_geodesic, interpolate_walk_poses
 
 
 def test_interpolate_densifies_moving_segments() -> None:
@@ -23,6 +23,21 @@ def test_interpolate_skips_static_segments() -> None:
     a = Pose(position=np.zeros(3))
     out = interpolate_walk_poses([a, a, a], per_segment=8)  # blocked/stop: no motion
     assert len(out) == 3  # one frame per static segment + final endpoint
+
+
+def test_movie_plan_holds_and_captions() -> None:
+    a = Pose(position=np.zeros(3))
+    b = Pose(position=np.array([0.0, 0.0, 4.0]))
+    shots = [
+        {"pose": a, "caption": "start", "hold": 1},
+        {"pose": b, "caption": "forward", "hold": 1},
+        {"pose": b, "caption": "★ MARK", "hold": 5},  # same pose as b: a pure hold
+    ]
+    poses, caps = _movie_frame_plan(shots, per_segment=4)
+    assert len(poses) == len(caps)
+    assert caps.count("★ MARK") == 5  # the mark lingers for its full hold
+    assert "start" in caps  # the opening caption is shown
+    assert caps[4] == "forward"  # caption appears on arrival at the moved-to checkpoint
 
 
 def test_rotation_geodesic_endpoints_and_midpoint() -> None:

@@ -114,6 +114,8 @@ PAGE_HTML = """<!doctype html>
     <button onclick="buildMovie()" class="ghost" style="align-self:end">Build</button>
   </div>
   <img id="movie-frame" class="panel" style="max-width:512px;margin-top:6px"/>
+  <div id="movie-cap" style="min-height:34px;font-size:12px;color:#cdd;white-space:pre-wrap;
+       background:rgba(0,0,0,.3);padding:6px 8px;border-radius:6px;margin-top:6px">—</div>
   <div class="row" style="align-items:center;margin-top:6px">
     <button id="movie-play" onclick="toggleMovie()" class="ghost" disabled style="flex:0 0 auto">▶ Play</button>
     <input type="range" id="movie-scrub" min="0" max="0" value="0" oninput="scrubMovie()" style="flex:3"/>
@@ -365,7 +367,7 @@ async function run(endpoint){
 }
 
 // ---- Walk replay (interpolated fly-through) ----
-let MOVIE = {frames:[], i:0, timer:null};
+let MOVIE = {frames:[], captions:[], i:0, timer:null};
 function addWalkOption(wid){
   const sel=document.getElementById("movie-walk");
   if([...sel.options].some(o=>o.value===wid)) return;
@@ -374,9 +376,10 @@ function addWalkOption(wid){
 function resetMovies(){
   stopMovie();
   document.getElementById("movie-walk").innerHTML="";
-  MOVIE={frames:[], i:0, timer:null};
+  MOVIE={frames:[], captions:[], i:0, timer:null};
   const scrub=document.getElementById("movie-scrub"); scrub.max=0; scrub.value=0;
   document.getElementById("movie-label").textContent="—";
+  document.getElementById("movie-cap").textContent="—";
   document.getElementById("movie-play").disabled=true;
   document.getElementById("movie-frame").removeAttribute("src");
 }
@@ -388,7 +391,7 @@ async function buildMovie(){
   try{
     const r=await fetch(`/api/walk-movie?walk=${encodeURIComponent(wid)}&per=${per}`).then(r=>r.json());
     if(!r.ok){ setStatus("movie failed: "+(r.error||"unknown")); return; }
-    MOVIE.frames=r.frames||[]; MOVIE.i=0;
+    MOVIE.frames=r.frames||[]; MOVIE.captions=r.captions||[]; MOVIE.i=0;
     const scrub=document.getElementById("movie-scrub");
     scrub.max=Math.max(0, MOVIE.frames.length-1); scrub.value=0;
     document.getElementById("movie-play").disabled = MOVIE.frames.length<2;
@@ -402,6 +405,7 @@ function showMovieFrame(i){
   document.getElementById("movie-frame").src=MOVIE.frames[MOVIE.i];
   document.getElementById("movie-scrub").value=MOVIE.i;
   document.getElementById("movie-label").textContent=`${MOVIE.i+1}/${MOVIE.frames.length}`;
+  document.getElementById("movie-cap").textContent=MOVIE.captions[MOVIE.i] || "—";
 }
 function scrubMovie(){ stopMovie(); showMovieFrame(+document.getElementById("movie-scrub").value); }
 function stopMovie(){ if(MOVIE.timer){ clearInterval(MOVIE.timer); MOVIE.timer=null; }

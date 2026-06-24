@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 import struct
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -328,40 +329,86 @@ def interpolate_walk_poses(poses: list[Pose], per_segment: int) -> list[Pose]:
     return out
 
 
+def _interp_pose(a: Pose, b: Pose, t: float) -> Pose:
+    """Pose between ``a`` and ``b``: linear position, slerped orientation."""
+    return Pose(
+        position=a.position * (1 - t) + b.position * t,
+        rotation=_rotation_geodesic(a.rotation, b.rotation, t),
+    )
+
+
+def _movie_frame_plan(
+    shots: list[dict[str, Any]], per_segment: int
+) -> tuple[list[Pose], list[str]]:
+    """Expand annotated shots into (poses, captions): glide into each shot, then hold on it.
+
+    A shot ``{"pose", "caption", "hold"}`` produces ``per_segment`` interpolated frames
+    of motion from the previous pose (captioned only on arrival), followed by ``hold``
+    repeated frames of the shot itself — so turns are seen as rotation and marks/describes
+    linger on screen with their caption.
+    """
+    poses: list[Pose] = []
+    captions: list[str] = []
+    prev: Pose = shots[0]["pose"]
+    for s in shots:
+        p: Pose = s["pose"]
+        cap = str(s.get("caption", ""))
+        moved = not (
+            np.allclose(prev.position, p.position) and np.allclose(prev.rotation, p.rotation)
+        )
+        if moved:
+            for k in range(1, per_segment + 1):
+                poses.append(_interp_pose(prev, p, k / per_segment))
+                captions.append(cap if k == per_segment else "")
+        for _ in range(max(1, int(s.get("hold", 1)))):
+            poses.append(p)
+            captions.append(cap)
+        prev = p
+    return poses, captions
+
+
 def render_walk_movie(
     config: RunConfig,
-    poses: list[Pose],
+    shots: list[dict[str, Any]],
     *,
     per_segment: int = 8,
-    max_frames: int = 300,
+    max_frames: int = 400,
 ) -> dict[str, object]:
-    """Render a smooth fly-through of a walk by interpolating between its poses.
+    """Render a narrated fly-through of a walk from its annotated ``shots`` timeline.
 
-    The walk's checkpoint poses are densified with up to ``per_segment`` frames per
-    segment (reduced so the total never exceeds ``max_frames``), then each is
-    rendered to an RGB frame. Returns JPEG data URLs ready for the dashboard player.
+    Motion between checkpoints is interpolated (``per_segment`` frames, scaled down so
+    the total stays under ``max_frames``); each frame carries a caption, and mark/describe
+    shots hold for several frames so the viewer sees the decision. Returns parallel
+    ``frames`` (JPEG data URLs) and ``captions`` for the dashboard player.
     """
     from gaussian_robot.render.camera import Camera  # noqa: PLC0415
     from gaussian_robot.vlm.qwen import jpeg_data_url  # noqa: PLC0415
 
     if not config.ply_path:
         raise ValueError("no ply_path configured")
-    if not poses:
-        return {"ok": False, "error": "no frames for this walk yet", "frames": []}
+    if not shots:
+        return {"ok": False, "error": "no frames for this walk yet", "frames": [], "captions": []}
     renderer, _, _ = _load_renderer(config.ply_path, device=config.cuda_device)
 
-    segments = max(1, len(poses) - 1)
+    segments = max(1, len(shots) - 1)
     per = max(1, min(per_segment, max(1, max_frames // segments)))
-    frame_poses = interpolate_walk_poses(poses, per)
-    if len(frame_poses) > max_frames:  # long walk: subsample evenly to the cap
-        idx = np.linspace(0, len(frame_poses) - 1, max_frames).astype(int)
-        frame_poses = [frame_poses[i] for i in idx]
+    poses, captions = _movie_frame_plan(shots, per)
+    if len(poses) > max_frames:  # long walk: subsample evenly (keeps caption alignment)
+        idx = np.linspace(0, len(poses) - 1, max_frames).astype(int)
+        poses = [poses[i] for i in idx]
+        captions = [captions[i] for i in idx]
 
     frames = [
         jpeg_data_url(renderer.render(Camera(pose=p, intrinsics=_PREVIEW_INTRINSICS)).rgb)
-        for p in frame_poses
+        for p in poses
     ]
-    return {"ok": True, "frames": frames, "n_frames": len(frames), "checkpoints": len(poses)}
+    return {
+        "ok": True,
+        "frames": frames,
+        "captions": captions,
+        "n_frames": len(frames),
+        "checkpoints": len(shots),
+    }
 
 
 def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
