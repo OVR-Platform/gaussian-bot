@@ -285,6 +285,84 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
     return {"frames": frames, "ok": True, "step_size": space.step, "n_steps": n_steps}
 
 
+def _rotation_geodesic(r0: np.ndarray, r1: np.ndarray, t: float) -> np.ndarray:
+    """Interpolate two world->camera rotations along the SO(3) geodesic (slerp).
+
+    Uses the same world-frame composition as ``apply_action`` (``R = Rw @ R0``):
+    the relative world rotation ``r1 @ r0.T`` is reduced to axis-angle and applied
+    by a fraction ``t``. Robust for the small per-step rotations a walk makes.
+    """
+    from gaussian_robot.nav.action import _rotation_about_axis  # noqa: PLC0415
+
+    rel = r1 @ r0.T
+    cos = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
+    theta = math.acos(cos)
+    if theta < 1e-6:
+        return r0.copy()
+    axis = np.array(
+        [rel[2, 1] - rel[1, 2], rel[0, 2] - rel[2, 0], rel[1, 0] - rel[0, 1]], dtype=np.float64
+    ) / (2.0 * math.sin(theta))
+    interpolated: np.ndarray = _rotation_about_axis(axis, t * theta) @ r0
+    return interpolated
+
+
+def interpolate_walk_poses(poses: list[Pose], per_segment: int) -> list[Pose]:
+    """Densify a walk trajectory: ``per_segment`` interpolated poses per checkpoint pair.
+
+    Consecutive identical checkpoints (a blocked/stop step that didn't move) add no
+    frames. Position is linearly interpolated; orientation slerped.
+    """
+    if len(poses) < 2 or per_segment < 1:
+        return list(poses)
+    out: list[Pose] = []
+    for a, b in zip(poses[:-1], poses[1:], strict=False):
+        same = bool(np.allclose(a.position, b.position) and np.allclose(a.rotation, b.rotation))
+        steps = 1 if same else per_segment
+        for k in range(steps):
+            t = k / per_segment
+            pos = a.position * (1 - t) + b.position * t
+            rot = a.rotation if same else _rotation_geodesic(a.rotation, b.rotation, t)
+            out.append(Pose(position=pos, rotation=rot))
+    out.append(poses[-1])
+    return out
+
+
+def render_walk_movie(
+    config: RunConfig,
+    poses: list[Pose],
+    *,
+    per_segment: int = 8,
+    max_frames: int = 300,
+) -> dict[str, object]:
+    """Render a smooth fly-through of a walk by interpolating between its poses.
+
+    The walk's checkpoint poses are densified with up to ``per_segment`` frames per
+    segment (reduced so the total never exceeds ``max_frames``), then each is
+    rendered to an RGB frame. Returns JPEG data URLs ready for the dashboard player.
+    """
+    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
+    from gaussian_robot.vlm.qwen import jpeg_data_url  # noqa: PLC0415
+
+    if not config.ply_path:
+        raise ValueError("no ply_path configured")
+    if not poses:
+        return {"ok": False, "error": "no frames for this walk yet", "frames": []}
+    renderer, _, _ = _load_renderer(config.ply_path, device=config.cuda_device)
+
+    segments = max(1, len(poses) - 1)
+    per = max(1, min(per_segment, max(1, max_frames // segments)))
+    frame_poses = interpolate_walk_poses(poses, per)
+    if len(frame_poses) > max_frames:  # long walk: subsample evenly to the cap
+        idx = np.linspace(0, len(frame_poses) - 1, max_frames).astype(int)
+        frame_poses = [frame_poses[i] for i in idx]
+
+    frames = [
+        jpeg_data_url(renderer.render(Camera(pose=p, intrinsics=_PREVIEW_INTRINSICS)).rgb)
+        for p in frame_poses
+    ]
+    return {"ok": True, "frames": frames, "n_frames": len(frames), "checkpoints": len(poses)}
+
+
 def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
     """World->camera rotation (OpenCV) whose camera sits at ``origin`` looking at ``target``."""
     up = up_vector(up_axis)

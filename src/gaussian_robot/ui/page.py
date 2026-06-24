@@ -106,6 +106,18 @@ PAGE_HTML = """<!doctype html>
   </div>
   <h2>Global coverage (world frame)</h2>
   <canvas id="world-map" width="600" height="600"></canvas>
+  <h2>Walk replay (interpolated fly-through)</h2>
+  <div class="row">
+    <select id="movie-walk" style="flex:2"></select>
+    <div style="flex:1"><label style="margin:0">frames/step</label><input id="movie-per" type="number" value="8" min="1"/></div>
+    <button onclick="buildMovie()" class="ghost" style="align-self:end">Build</button>
+  </div>
+  <img id="movie-frame" class="panel" style="max-width:512px;margin-top:6px"/>
+  <div class="row" style="align-items:center;margin-top:6px">
+    <button id="movie-play" onclick="toggleMovie()" class="ghost" disabled style="flex:0 0 auto">▶ Play</button>
+    <input type="range" id="movie-scrub" min="0" max="0" value="0" oninput="scrubMovie()" style="flex:3"/>
+    <span id="movie-label" style="font-size:12px;color:#aaa;min-width:64px;flex:0 0 auto">—</span>
+  </div>
   <h2>Scene description</h2>
   <pre id="scene-desc" style="white-space:pre-wrap;max-height:140px;overflow:auto;font-size:12px;
        background:rgba(80,140,80,.12);padding:8px;border-radius:6px;">—</pre>
@@ -289,6 +301,7 @@ async function run(endpoint){
       SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || [];
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
+      resetMovies();
       drawWorld(document.getElementById("world-map").getContext("2d"), [], [], null);
       const seedsLabel = (m.requested_seeds && m.requested_seeds !== m.total_seeds)
         ? `${m.total_seeds}/${m.requested_seeds}` : `${m.total_seeds}`;
@@ -296,7 +309,7 @@ async function run(endpoint){
     if(m.type==="walk_end"){
       const log = document.getElementById("action-log");
       log.textContent += `── ${m.walk_id} (${walkKind(m.walk_id)}) ended: ${m.reason} (${m.steps} steps) ──\n`;
-      log.scrollTop = log.scrollHeight; return; }
+      log.scrollTop = log.scrollHeight; addWalkOption(m.walk_id); return; }
     if(m.type==="scene_describe"){
       document.getElementById("scene-desc").textContent = m.description || "—";
       const log = document.getElementById("action-log");
@@ -314,6 +327,7 @@ async function run(endpoint){
       if(m.panels.depth) document.getElementById("depth").src=m.panels.depth;
       if(m.panels.confidence) document.getElementById("confidence").src=m.panels.confidence;
       if(m.panels.map) document.getElementById("body-map").src=m.panels.map;
+      addWalkOption(m.walk_id);
       document.getElementById("reason").textContent = m.raw_text || m.action;
       const log = document.getElementById("action-log");
       const pos = m.pose.map(v=>v.toFixed(1)).join(",");
@@ -329,6 +343,56 @@ async function run(endpoint){
   };
   stream.onerror = ()=>{ setStatus("disconnected"); stepping=false; document.getElementById("btn-next").disabled=true; };
 }
+
+// ---- Walk replay (interpolated fly-through) ----
+let MOVIE = {frames:[], i:0, timer:null};
+function addWalkOption(wid){
+  const sel=document.getElementById("movie-walk");
+  if([...sel.options].some(o=>o.value===wid)) return;
+  const o=document.createElement("option"); o.value=wid; o.textContent=wid; sel.appendChild(o);
+}
+function resetMovies(){
+  stopMovie();
+  document.getElementById("movie-walk").innerHTML="";
+  MOVIE={frames:[], i:0, timer:null};
+  const scrub=document.getElementById("movie-scrub"); scrub.max=0; scrub.value=0;
+  document.getElementById("movie-label").textContent="—";
+  document.getElementById("movie-play").disabled=true;
+  document.getElementById("movie-frame").removeAttribute("src");
+}
+async function buildMovie(){
+  const wid=document.getElementById("movie-walk").value;
+  if(!wid){ setStatus("select a walk first"); return; }
+  const per=num(document.getElementById("movie-per").value, 8);
+  setStatus("rendering fly-through for "+wid+"…");
+  try{
+    const r=await fetch(`/api/walk-movie?walk=${encodeURIComponent(wid)}&per=${per}`).then(r=>r.json());
+    if(!r.ok){ setStatus("movie failed: "+(r.error||"unknown")); return; }
+    MOVIE.frames=r.frames||[]; MOVIE.i=0;
+    const scrub=document.getElementById("movie-scrub");
+    scrub.max=Math.max(0, MOVIE.frames.length-1); scrub.value=0;
+    document.getElementById("movie-play").disabled = MOVIE.frames.length<2;
+    showMovieFrame(0);
+    setStatus(`movie ${wid}: ${MOVIE.frames.length} frames from ${r.checkpoints} checkpoints`);
+  }catch(e){ setStatus("movie error: "+e.message); }
+}
+function showMovieFrame(i){
+  if(!MOVIE.frames.length) return;
+  MOVIE.i=Math.max(0, Math.min(i, MOVIE.frames.length-1));
+  document.getElementById("movie-frame").src=MOVIE.frames[MOVIE.i];
+  document.getElementById("movie-scrub").value=MOVIE.i;
+  document.getElementById("movie-label").textContent=`${MOVIE.i+1}/${MOVIE.frames.length}`;
+}
+function scrubMovie(){ stopMovie(); showMovieFrame(+document.getElementById("movie-scrub").value); }
+function stopMovie(){ if(MOVIE.timer){ clearInterval(MOVIE.timer); MOVIE.timer=null; }
+  document.getElementById("movie-play").textContent="▶ Play"; }
+function toggleMovie(){
+  if(MOVIE.timer){ stopMovie(); return; }
+  if(MOVIE.frames.length<2) return;
+  document.getElementById("movie-play").textContent="⏸ Pause";
+  MOVIE.timer=setInterval(()=>{ showMovieFrame(MOVIE.i+1>=MOVIE.frames.length ? 0 : MOVIE.i+1); }, 80);
+}
+
 loadConfig();
 </script>
 </body>
