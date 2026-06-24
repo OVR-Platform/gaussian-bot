@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from gaussian_robot.metrics.coverage3d import build_coverage3d
+from gaussian_robot.session import _clip_to_material_band
 
 _LO = np.zeros(3)
 _HI = np.full(3, 8.0)
@@ -66,6 +67,16 @@ def test_interior_of_solid_block_is_not_a_gap() -> None:
     assert int(cov.occupied.sum()) == 27  # the full 3x3x3 block
     assert cov.occupied[3, 3, 3] and not cov.gap_mask[3, 3, 3]  # enclosed centre is not a gap
     assert int(cov.gap_mask.sum()) == 26  # only the 26 exposed-surface voxels
+
+
+def test_clip_to_material_band_drops_floaters_above_ceiling() -> None:
+    # up = -y: "higher" is more negative y. Material sits around y in [0, -2];
+    # a gap far above the material (y = -50) is a floater and must be clipped.
+    means = np.array([[0.0, -float(k) * 0.02, 0.0] for k in range(100)], dtype=np.float64)
+    gaps = np.array([[0.0, -1.0, 0.0], [0.0, -50.0, 0.0]], dtype=np.float64)
+    kept = _clip_to_material_band(gaps, means, "-y")
+    assert kept.shape == (1, 3)
+    assert np.allclose(kept[0], [0.0, -1.0, 0.0])  # in-band gap survives, floater dropped
 
 
 def test_gap_centers_and_nearest() -> None:

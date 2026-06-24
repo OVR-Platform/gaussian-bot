@@ -784,6 +784,23 @@ def _build_coverage3d(
     )
 
 
+def _clip_to_material_band(
+    gaps: np.ndarray, means: np.ndarray, up_axis: str, *, ceiling_pct: float = 99.0
+) -> np.ndarray:
+    """Drop gaps above the real material ceiling (3DGS floaters / unmapped void).
+
+    Height-along-up is ``points @ up_vector`` (sign-safe: larger = higher regardless of
+    axis sign). The ceiling is a robust high percentile of the gaussian heights, so a few
+    stray floaters far above the captured geometry don't seed phantom gaps in empty air.
+    """
+    if gaps.shape[0] == 0 or means.shape[0] == 0:
+        return gaps
+    up = up_vector(up_axis)
+    ceiling = float(np.percentile(means @ up, ceiling_pct))
+    kept: np.ndarray = gaps[(gaps @ up) <= ceiling]
+    return kept
+
+
 def _aerial_seed(
     renderer: Renderer,
     points: np.ndarray,
@@ -892,12 +909,15 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
     if config.terrain_follow and means_np is not None:
         height_field = build_height_field(means_np, up_axis, bmin, bmax)
 
-    # Tier-3 3D coverage: occupied-but-unseen voxels (roofs/floors/behind-buildings).
+    # Tier-3 3D coverage: occupied-but-unseen *surface* voxels (occlusion pockets behind
+    # furniture, shaded corners, backs of structure). Confined to the band of real material:
+    # an unmapped region (e.g. an uncaptured upper floor) has no occupancy, so it is never a
+    # "gap" — and stray high floaters above the material are clipped out below.
     gap_centers = np.empty((0, 3), dtype=np.float64)
-    if config.coverage_3d and means_np is not None:
+    if config.coverage_3d and means_np is not None and means_np.shape[0] > 0:
         cov3d = _build_coverage3d(renderer, means_np, capture_poses, config, bmin, bmax)
         if cov3d is not None:
-            gap_centers = cov3d.gap_centers()
+            gap_centers = _clip_to_material_band(cov3d.gap_centers(), means_np, up_axis)
     gap_floor = (
         floor_xy(gap_centers, up_axis)
         if gap_centers.shape[0] > 0
