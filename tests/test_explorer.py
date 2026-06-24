@@ -331,6 +331,11 @@ def test_marks_are_deduped_by_coverage_radius() -> None:
         Pose(position=np.array([5.3, 0.0, 5.0])), result, walk_id="w", step=2, auto=True
     )
     assert len(result.marks) == 1
+    # but an aerial mark directly above (height diff > coverage radius) is kept
+    assert explorer._record_mark(
+        Pose(position=np.array([5.0, 3.0, 5.0])), result, walk_id="w", step=3, auto=True
+    )
+    assert len(result.marks) == 2
 
 
 def test_follow_terrain_sets_camera_above_local_ground() -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gaussian_robot.nav.terrain import build_height_field
+from gaussian_robot.nav.terrain import aerial_target, build_height_field
 
 
 def _column(x: float, z: float, ys: list[float]) -> np.ndarray:
@@ -35,3 +35,18 @@ def test_empty_means_gives_all_unknown() -> None:
         np.empty((0, 3)), "y", np.zeros(3), np.array([10.0, 10.0, 10.0]), grid_size=4
     )
     assert hf.ground(5.0, 5.0) is None
+
+
+def test_aerial_target_finds_tall_geometry() -> None:
+    ground = np.array([[float(x), 0.0, float(z)] for x in range(5) for z in range(5)])
+    tower = np.array([[3.0, h, 7.0] for h in (5.0, 6.0, 7.0, 8.0)])
+    res = aerial_target(np.vstack([ground, tower]), "y")
+    assert res is not None
+    xz, survey_h = res
+    assert np.allclose(xz, [3.0, 7.0], atol=1.0)  # vantage over the tower
+    assert survey_h > 8.0  # above the highest geometry
+
+
+def test_aerial_target_none_on_flat_scene() -> None:
+    flat = np.array([[float(x), 0.0, float(z)] for x in range(5) for z in range(5)])
+    assert aerial_target(flat, "y") is None

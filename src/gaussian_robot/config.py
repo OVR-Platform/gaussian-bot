@@ -89,6 +89,11 @@ class RunConfig(BaseModel):
         ge=1,
         description="Number of walk seeds. Fewer = budget spent exploring deeply, not restarting.",
     )
+    aerial_survey: bool = Field(
+        default=True,
+        description="Add one extra walk that starts high above the tallest geometry looking "
+        "down, to survey rooftops/upper structure that ground-level walks never reach.",
+    )
     terrain_follow: bool = Field(
         default=True,
         description="Keep the camera at a constant eye-height above local ground on "

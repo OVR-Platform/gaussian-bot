@@ -162,7 +162,7 @@ class Explorer:
     actions_per_query: int = 1  # action chunking: max actions the VLM plans per query
     height_field: HeightField | None = None  # ground heights for terrain-following
     _marks_total: int = 0  # running count of marked fill-in poses this session
-    _mark_floor: list[np.ndarray] = field(default_factory=list)  # floor pos of marks (dedup)
+    _mark_pos: list[np.ndarray] = field(default_factory=list)  # 3D positions of marks (dedup)
     _eye_offset: float | None = None  # camera height above local ground for this walk
 
     def _describe_step(
@@ -198,19 +198,24 @@ class Explorer:
     ) -> bool:
         """Add ``pose`` to the deliverable marks and emit a MarkEvent (deduped).
 
-        Skips (returns False) when within ``coverage_radius`` of an existing mark, so
-        neither the VLM nor the auto-marker piles several marks on the same spot.
+        Skips (returns False) when within ``coverage_radius`` in **3D** of an existing
+        mark — so neither the VLM nor the auto-marker piles marks on one spot, yet an
+        aerial pose directly above a ground mark (large height difference) is kept.
         """
-        floor = floor_xy(pose.position, self.scene.up_axis)[0]
-        if any(float(np.linalg.norm(floor - m)) < self.coverage_radius for m in self._mark_floor):
+        pos = pose.position
+        if any(float(np.linalg.norm(pos - m)) < self.coverage_radius for m in self._mark_pos):
             return False
         self._marks_total += 1
         result.marks.append(pose)
-        self._mark_floor.append(floor)
+        self._mark_pos.append(pos)
         if self.event_sink is not None:
             self.event_sink(
                 MarkEvent(
-                    walk_id=walk_id, step=step, floor=floor, count=self._marks_total, auto=auto
+                    walk_id=walk_id,
+                    step=step,
+                    floor=floor_xy(pos, self.scene.up_axis)[0],
+                    count=self._marks_total,
+                    auto=auto,
                 )
             )
         return True
@@ -524,7 +529,7 @@ class Explorer:
         actually launched) so the UI can report rejections.
         """
         self._marks_total = 0
-        self._mark_floor = []
+        self._mark_pos = []
         if self.event_sink is not None:
             self.event_sink(
                 SessionStartEvent(

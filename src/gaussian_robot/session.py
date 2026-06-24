@@ -34,7 +34,13 @@ from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
 from gaussian_robot.config import RunConfig
 from gaussian_robot.filters.pose_filters import FilteredPose, filter_poses
 from gaussian_robot.metrics.coverage import CoverageState, PoseSample
-from gaussian_robot.nav.action import ActionSpace, interpolate_pose, slerp_rotation
+from gaussian_robot.nav.action import (
+    Action,
+    ActionSpace,
+    apply_action,
+    interpolate_pose,
+    slerp_rotation,
+)
 from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
 from gaussian_robot.nav.observation import ObservationBuilder, frontier_floor_positions
 from gaussian_robot.nav.stop import (
@@ -48,7 +54,7 @@ from gaussian_robot.nav.stop import (
     StopPolicy,
     StuckGuard,
 )
-from gaussian_robot.nav.terrain import HeightField, build_height_field
+from gaussian_robot.nav.terrain import HeightField, aerial_target, build_height_field
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import CameraIntrinsics, Pose, axis_index, up_vector
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
@@ -730,6 +736,39 @@ def assemble_deliverable(
     )
 
 
+def _aerial_seed(
+    renderer: Renderer,
+    means: np.ndarray,
+    up_axis: str,
+    bmin: np.ndarray,
+    bmax: np.ndarray,
+    space: ActionSpace,
+) -> SeedPose | None:
+    """A walk seed high above the tallest geometry, pitched down to survey rooftops.
+
+    Flies to a vantage over the tallest structures (``aerial_target``) and looks ~60°
+    down toward the scene centre. Returns None on a flat scene or if the vantage looks
+    into the void. The walk then roams at altitude (terrain-follow keeps it aloft).
+    """
+    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
+
+    at = aerial_target(means, up_axis)
+    if at is None:
+        return None
+    xz, survey_h = at
+    a_idx, b_idx = _floor_axes(up_axis)
+    pos: np.ndarray = np.zeros(3)
+    pos[a_idx], pos[b_idx] = xz[0], xz[1]
+    pos = np.clip(pos + survey_h * up_vector(up_axis), bmin, bmax)
+    pose = Pose(position=pos, rotation=look_at(pos, (bmin + bmax) / 2.0, up_axis))
+    for _ in range(2):  # pitch ~60° down to frame the structures below/ahead
+        pose = apply_action(pose, Action.LOOK_DOWN, space, up_axis)
+    result = renderer.render(Camera(pose=pose, intrinsics=_PREVIEW_INTRINSICS))
+    if result.depth is None or float(np.isfinite(result.depth).mean()) < _SEED_MIN_FINITE_FRAC:
+        return None  # vantage looks into sky/void — skip
+    return SeedPose(pose=pose, kind="aerial")
+
+
 def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], CoverageState]:
     """Construct an :class:`Explorer`, seeds and a fresh coverage state from config.
 
@@ -792,16 +831,17 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         QualityTarget(radius=coverage_radius, tau=0.7),
         SeedExhaustion(),
     ]
+    cloud_means = getattr(getattr(renderer, "cloud", None), "means", None)
+    means_np: np.ndarray | None = None
+    if cloud_means is not None:
+        means_np = (
+            np.asarray(cloud_means.detach().cpu())
+            if hasattr(cloud_means, "detach")
+            else np.asarray(cloud_means)
+        )
     height_field: HeightField | None = None
-    if config.terrain_follow:
-        cloud_means = getattr(getattr(renderer, "cloud", None), "means", None)
-        if cloud_means is not None:
-            means_np = (
-                np.asarray(cloud_means.detach().cpu())
-                if hasattr(cloud_means, "detach")
-                else np.asarray(cloud_means)
-            )
-            height_field = build_height_field(means_np, up_axis, bmin, bmax)
+    if config.terrain_follow and means_np is not None:
+        height_field = build_height_field(means_np, up_axis, bmin, bmax)
 
     explorer = Explorer(
         scene=scene,
@@ -835,6 +875,10 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
     seeds = validate_seed_poses(
         renderer, candidates, num_seeds=config.num_seeds, step=space.step, strict=not seed_pool
     )
+    if config.aerial_survey and means_np is not None:
+        aerial = _aerial_seed(renderer, means_np, up_axis, bmin, bmax, space)
+        if aerial is not None:
+            seeds.append(aerial)  # one extra walk surveying rooftops from above
 
     coverage = CoverageState.empty(up_axis, bmin, bmax)
     return explorer, seeds, coverage

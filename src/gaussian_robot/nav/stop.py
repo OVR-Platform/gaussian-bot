@@ -23,14 +23,18 @@ from gaussian_robot.metrics.coverage import CoverageState, floor_coverage
 from gaussian_robot.nav.action import Action
 from gaussian_robot.render.camera import Pose
 
-# Actions that don't translate the camera on the floor plane. Their (near-zero)
-# novelty must not be read as a coverage plateau.
+# Actions that don't translate on the FLOOR plane. Their (near-zero) floor-novelty
+# must not be read as a coverage plateau: turns/looks/describe/mark don't move, and
+# move_up/move_down change only height (novelty is floor-plane only) — so a vertical
+# climb to inspect roofs is neutral, not a plateau vote.
 _NON_TRANSLATING = frozenset(
     {
         Action.TURN_LEFT,
         Action.TURN_RIGHT,
         Action.LOOK_UP,
         Action.LOOK_DOWN,
+        Action.MOVE_UP,
+        Action.MOVE_DOWN,
         Action.DESCRIBE,
         Action.MARK,
     }
