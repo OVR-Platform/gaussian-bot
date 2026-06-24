@@ -333,11 +333,11 @@ class Explorer:
         *,
         walk_id: str,
         step: int,
-    ) -> tuple[str | None, bool]:
+    ) -> tuple[str | None, bool, bool]:
         """Execute one movement action, record/emit it, and run the walk-stop policies.
 
-        Returns ``(stop_reason or None, plan_invalidated)`` — ``plan_invalidated`` is
-        True when the step was blocked or degenerate (the chunked plan is now stale).
+        Returns ``(stop_reason or None, blocked, degenerate)``. ``blocked``/``degenerate``
+        both invalidate a chunked plan; ``blocked`` also drives the "wall ahead" hint.
         """
         action_history.append(action.value)
         # Free distance ahead from the *current* metric render caps a forward step
@@ -386,7 +386,7 @@ class Explorer:
             blocked=blocked,
             tween=tween,
         )
-        return walk_stop_reason(self.walk_policies), (blocked or degenerate)
+        return walk_stop_reason(self.walk_policies), blocked, degenerate
 
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, walk_id: str = ""
@@ -411,6 +411,7 @@ class Explorer:
         action_history: list[str] = []
         stop_reason = "step_budget"
         prev_view_pose: Pose | None = None  # last view shown, for the live tween
+        blocked_ahead = False  # was the previous forward blocked by a wall?
         plan: list[Action] = []  # remaining planned actions (action chunking)
         plan_decision: Decision | None = None  # the VLM decision that produced `plan`
         for step_idx in range(self.max_steps):
@@ -435,6 +436,7 @@ class Explorer:
                 scene_description=scene_description,
                 marks=self._marks_total,
                 mark_target=self.mark_target,
+                blocked_ahead=blocked_ahead,
             )
             if not plan:  # action chunking: query the VLM only when the plan runs out
                 plan_decision = self.vlm.act(observation)
@@ -468,7 +470,7 @@ class Explorer:
                 )
                 continue  # marking doesn't change the route — keep executing the plan
 
-            reason, invalidated = self._step_action(
+            reason, blocked, degenerate = self._step_action(
                 robot,
                 action,
                 decision,
@@ -482,8 +484,9 @@ class Explorer:
                 walk_id=walk_id,
                 step=step,
             )
-            if invalidated:
-                plan = []  # blocked/degenerate: the plan is stale, re-query next step
+            blocked_ahead = blocked  # surfaced in the next step's [state] to prompt an escape
+            if blocked or degenerate:
+                plan = []  # the plan is stale, re-query next step
             if reason is not None:
                 stop_reason = reason
                 break

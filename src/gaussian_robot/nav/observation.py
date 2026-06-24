@@ -232,9 +232,10 @@ class ObservationBuilder:
         "3. Gap is a soft bias, not a precondition: if the 'nearest gap' bearing is well off to "
         "one side, turn toward it once or twice and then advance. You do NOT need it perfectly "
         "centred — once it's roughly ahead, MOVE.\n"
-        "4. Obstacle handling: if wall_distance is small or [depth] is mostly bright you face a "
-        "surface — turn once or twice OR back up to find an open direction, then move. Don't keep "
-        "turning in place.\n"
+        "4. ESCAPE walls: if a forward is BLOCKED (you didn't move) or wall_distance is tiny, do "
+        "NOT keep nudging forward — that wastes the walk. BACK up a step or two, or turn ~180° "
+        "(turn the SAME way three times) to face open space, then travel that way. Treat the "
+        "'!! BLOCKED' note in [state] as an order to back up / turn around, not to retry forward.\n"
         "5. MARK SPARINGLY. Good fill-in poses are recorded automatically as you explore, so do "
         "NOT mark every step. Only MARK a distinct gap you specifically want captured — at most "
         "once per area, and NEVER several steps in a row. Marking is not the goal; covering new "
@@ -268,6 +269,7 @@ class ObservationBuilder:
         scene_description: str = "",
         marks: int = 0,
         mark_target: int = 0,
+        blocked_ahead: bool = False,
     ) -> tuple[Observation, RenderResult]:
         """Render the view and assemble the observation.
 
@@ -290,7 +292,15 @@ class ObservationBuilder:
         map_panel = self._body_frame_map(coverage, camera.pose, trail, gap_xy=gap_xy)
         wall_distance = wall_distance_from_depth(result.depth)
         state_line = self._state_line(
-            camera.pose, step, budget, coverage_pct, wall_distance, gap_info, marks, mark_target
+            camera.pose,
+            step,
+            budget,
+            coverage_pct,
+            wall_distance,
+            gap_info,
+            marks,
+            mark_target,
+            blocked_ahead,
         )
 
         parts = [self.prompt]
@@ -351,6 +361,7 @@ class ObservationBuilder:
         gap_info: tuple[float, float] | None = None,
         marks: int = 0,
         mark_target: int = 0,
+        blocked_ahead: bool = False,
     ) -> str:
         step_str = f"{step}/{budget}" if budget > 0 else str(step)
         parts = [
@@ -371,6 +382,11 @@ class ObservationBuilder:
                 parts.append(f"nearest gap {abs(bearing):.0f}° {side}, {dist:.1f}m")
         else:
             parts.append("nearest gap: none in range")
+        if blocked_ahead:
+            parts.append(
+                "!! BLOCKED: a wall is right ahead and your last forward did NOT move you — "
+                "do not go forward; BACK up a step or two, or turn ~180° (same way 3×) to open space"
+            )
         return "; ".join(parts)
 
     def _nearest_gap(self, cur_floor: np.ndarray) -> np.ndarray | None:

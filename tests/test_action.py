@@ -89,9 +89,9 @@ def test_forward_stays_level_when_looking_up() -> None:
 
 def test_forward_capped_by_clearance() -> None:
     pose = Pose(position=np.zeros(3))  # looks +Z
-    # clearance 0.6, margin = 0.5 * step(1.0) = 0.5 -> capped step 0.1
+    # clearance 0.6, margin = 0.3 * step(1.0) = 0.3 -> capped step 0.3
     moved = apply_action(pose, Action.FORWARD, _SPACE, up_axis="y", clearance=0.6)
-    assert np.allclose(moved.position, [0.0, 0.0, 0.1])
+    assert np.allclose(moved.position, [0.0, 0.0, 0.3])
 
 
 def test_forward_blocked_when_clearance_below_margin() -> None:

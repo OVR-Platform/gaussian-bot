@@ -68,7 +68,7 @@ class ActionSpace:
 
 
 def capped_forward_step(
-    step: float, clearance: float | None, *, margin_factor: float = 0.5
+    step: float, clearance: float | None, *, margin_factor: float = 0.3
 ) -> float:
     """Shorten a forward ``step`` so it stops short of an obstacle at ``clearance``.
 
