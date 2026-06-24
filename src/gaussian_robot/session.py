@@ -31,9 +31,10 @@ import numpy as np
 
 from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
 from gaussian_robot.config import RunConfig
-from gaussian_robot.metrics.coverage import CoverageState
+from gaussian_robot.filters.pose_filters import FilteredPose, filter_poses
+from gaussian_robot.metrics.coverage import CoverageState, PoseSample
 from gaussian_robot.nav.action import ActionSpace
-from gaussian_robot.nav.explorer import Explorer, SeedPose
+from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
 from gaussian_robot.nav.observation import ObservationBuilder
 from gaussian_robot.nav.stop import (
     BoundsGuard,
@@ -655,6 +656,31 @@ def build_vlm(config: RunConfig) -> VLMClient:
             max_history_turns=config.vlm_max_history_turns,
         )
     return ScriptedDemoVLM()
+
+
+def assemble_deliverable(
+    results: list[WalkResult],
+    *,
+    up_axis: str,
+    r_keep: float,
+    budget: int,
+    min_confidence: float = 0.0,
+) -> list[FilteredPose]:
+    """Build the deliverable pose set (ADR-0008), preferring VLM-marked viewpoints.
+
+    The deliverable is the set of *new* camera poses to densify the splat. When the
+    VLM has marked fill-in viewpoints (``WalkResult.marks``), those are the primary
+    source — the agent has explicitly proposed them. Only when no poses were marked
+    do we fall back to the union of all visited trajectory poses. Either way the
+    chosen poses pass the standard quality/novelty/budget filter.
+    """
+    marks = [PoseSample(pose=p, walk_id=r.walk_id) for r in results for p in r.marks]
+    samples = marks or [
+        PoseSample(pose=s.pose, walk_id=r.walk_id) for r in results for s in r.steps
+    ]
+    return filter_poses(
+        samples, up_axis=up_axis, r_keep=r_keep, budget=budget, min_confidence=min_confidence
+    )
 
 
 def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], CoverageState]:

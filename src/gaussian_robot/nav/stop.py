@@ -26,7 +26,14 @@ from gaussian_robot.render.camera import Pose
 # Actions that don't translate the camera on the floor plane. Their (near-zero)
 # novelty must not be read as a coverage plateau.
 _NON_TRANSLATING = frozenset(
-    {Action.TURN_LEFT, Action.TURN_RIGHT, Action.LOOK_UP, Action.LOOK_DOWN, Action.DESCRIBE}
+    {
+        Action.TURN_LEFT,
+        Action.TURN_RIGHT,
+        Action.LOOK_UP,
+        Action.LOOK_DOWN,
+        Action.DESCRIBE,
+        Action.MARK,
+    }
 )
 
 
@@ -148,7 +155,7 @@ class StuckGuard:
         self._triggered = False
 
     def update(self, ctx: WalkContext) -> None:
-        if ctx.action in (Action.STOP, Action.DESCRIBE) or ctx.degenerate:
+        if ctx.action in (Action.STOP, Action.DESCRIBE, Action.MARK) or ctx.degenerate:
             return
         self._positions.append(ctx.pose.position.copy())
         if len(self._positions) > self.window:

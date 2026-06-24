@@ -82,6 +82,7 @@ PAGE_HTML = """<!doctype html>
     <div><label>max steps / walk</label><input id="max_steps" type="number"/></div>
     <div><label>pose budget</label><input id="pose_budget" type="number"/></div>
     <div><label># seeds</label><input id="num_seeds" type="number"/></div>
+    <div><label>pose target</label><input id="pose_target" type="number"/></div>
   </div>
   <div class="row">
     <button onclick="saveConfig()" class="ghost">Save config</button>
@@ -150,6 +151,7 @@ async function loadConfig(){
   document.getElementById("max_steps").value = c.max_steps;
   document.getElementById("pose_budget").value = c.pose_budget;
   document.getElementById("num_seeds").value = c.num_seeds;
+  document.getElementById("pose_target").value = c.pose_target;
 }
 function gather(){
   const split3 = v => v.split(",").map(parseFloat);
@@ -175,6 +177,7 @@ function gather(){
     max_steps: num(document.getElementById("max_steps").value, 40),
     pose_budget: num(document.getElementById("pose_budget").value, 200),
     num_seeds: num(document.getElementById("num_seeds").value, 5),
+    pose_target: num(document.getElementById("pose_target").value, 30),
   };
 }
 async function saveConfig(){
@@ -207,7 +210,7 @@ function setStatus(t){ document.getElementById("status").textContent = t; }
 function setChips(o){ document.getElementById("chips").innerHTML =
   Object.entries(o).map(([k,v])=>`<span class="chip"><b>${k}</b> ${v}</span>`).join(""); }
 
-let SEEDS = [], SEED_KINDS = [];
+let SEEDS = [], SEED_KINDS = [], MARKS = [], LAST_STEP = null;
 const seedColor = kind => (kind === "capture" ? "#f5be28" : "#e0662a");  // amber=real, orange=synthetic
 const walkIndex = wid => { const n = String(wid).match(/\\d+/); return n ? parseInt(n[0], 10) : -1; };
 const walkKind = wid => SEED_KINDS[walkIndex(wid)] || "?";
@@ -232,10 +235,15 @@ function drawWorld(ctx, sampled, trail, pose){
     ctx.strokeStyle="#2aa846"; ctx.lineWidth=2; ctx.beginPath();
     trail.forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
   }
+  // marked fill-in poses (the deliverable): purple diamonds, drawn on top
+  ctx.fillStyle="#c050ff";
+  (MARKS||[]).forEach(p=>{ const x=tx(p[0]),y=ty(p[1]),s=5;
+    ctx.beginPath(); ctx.moveTo(x,y-s); ctx.lineTo(x+s,y); ctx.lineTo(x,y+s); ctx.lineTo(x-s,y);
+    ctx.closePath(); ctx.fill(); });
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
   // legend
   ctx.font="11px sans-serif"; ctx.textBaseline="middle";
-  const items=[["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"]];
+  const items=[["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"],["#c050ff","marked (fill-in)"]];
   items.forEach(([c,t],i)=>{ const y=14+i*16; ctx.fillStyle=c;
     ctx.beginPath(); ctx.arc(14,y,4,0,7); ctx.fill(); ctx.fillStyle="#bbb"; ctx.fillText(t,24,y); });
   // world axis labels: horizontal = +floor axis a, vertical = +floor axis b (up axis is out of plane)
@@ -298,7 +306,7 @@ async function run(endpoint){
   stream.onmessage = (e)=>{
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
-      SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || [];
+      SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || []; MARKS = []; LAST_STEP = null;
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
       resetMovies();
@@ -310,6 +318,17 @@ async function run(endpoint){
       const log = document.getElementById("action-log");
       log.textContent += `── ${m.walk_id} (${walkKind(m.walk_id)}) ended: ${m.reason} (${m.steps} steps) ──\n`;
       log.scrollTop = log.scrollHeight; addWalkOption(m.walk_id); return; }
+    if(m.type==="mark"){
+      MARKS.push(m.floor);
+      const tgt = num(document.getElementById("pose_target").value, 30);
+      const log = document.getElementById("action-log");
+      log.textContent += `★ ${m.walk_id} #${m.step}: marked fill-in pose (${m.count}/${tgt})\n`;
+      log.scrollTop = log.scrollHeight;
+      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, action:"mark", marks:`${m.count}/${tgt}`});
+      const ctx=document.getElementById("world-map").getContext("2d");
+      if(LAST_STEP) drawWorld(ctx, LAST_STEP.sampled, LAST_STEP.trail, LAST_STEP.pose);
+      else drawWorld(ctx, [], [], null);
+      return; }
     if(m.type==="scene_describe"){
       document.getElementById("scene-desc").textContent = m.description || "—";
       const log = document.getElementById("action-log");
@@ -338,6 +357,7 @@ async function run(endpoint){
         novelty:m.novelty.toFixed(2), blocked:m.blocked?"!":"", degenerate:m.degenerate?"!":"",
         "cov(floor)":(100*m.coverage_floor).toFixed(1)+"%",
         "cov(pose)":(100*m.coverage_pose_space).toFixed(1)+"%"});
+      LAST_STEP = m;
       drawWorld(document.getElementById("world-map").getContext("2d"), m.sampled, m.trail, m.pose);
     }
   };

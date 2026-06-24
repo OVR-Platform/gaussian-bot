@@ -52,6 +52,16 @@ class StepEvent:
 
 
 @dataclass(frozen=True)
+class MarkEvent:
+    """Emitted when the VLM marks the current viewpoint as a pose to fill in."""
+
+    walk_id: str
+    step: int
+    floor: np.ndarray  # (2,) floor-plane position of the marked pose
+    count: int  # total marks accumulated this session so far
+
+
+@dataclass(frozen=True)
 class WalkEndEvent:
     """Emitted when one walk ends, carrying *why* it stopped."""
 
@@ -78,5 +88,7 @@ class SessionEndEvent:
     total_poses: int
 
 
-SessionEvent = SessionStartEvent | StepEvent | WalkEndEvent | SceneDescribeEvent | SessionEndEvent
+SessionEvent = (
+    SessionStartEvent | StepEvent | MarkEvent | WalkEndEvent | SceneDescribeEvent | SessionEndEvent
+)
 EventSink = Callable[[SessionEvent], None]

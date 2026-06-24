@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from gaussian_robot.events import SessionEndEvent, SessionStartEvent, WalkEndEvent
+from gaussian_robot.events import MarkEvent, SessionEndEvent, SessionStartEvent, WalkEndEvent
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import Action, ActionSpace
 from gaussian_robot.nav.explorer import Explorer, SeedPose
@@ -223,6 +223,18 @@ def test_session_end_reason_is_specific() -> None:
     assert start.seed_floor.shape == (2, 2)  # both seeds' floor positions surfaced
     assert start.seed_kinds == ["capture", "origin_fallback"]  # provenance surfaced
     assert start.total_seeds == 2 and start.requested_seeds == 4  # rejections visible
+
+
+def test_mark_records_pose_and_emits_event_without_moving() -> None:
+    events: list[object] = []
+    explorer = _explorer([Action.MARK], max_steps=4)
+    explorer.event_sink = events.append
+    state = _state()
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), state, walk_id="walk0")
+    assert len(result.marks) >= 1  # the marked viewpoint(s) are recorded
+    marks = [e for e in events if isinstance(e, MarkEvent)]
+    assert marks and marks[0].walk_id == "walk0" and marks[0].count == 1
+    assert len(state) == 1  # mark neither moves the robot nor adds coverage
 
 
 def test_render_is_runtime_checkable() -> None:

@@ -21,8 +21,14 @@ def test_action_verbs_match_adr() -> None:
         "move_up",
         "move_down",
         "describe",
+        "mark",
         "stop",
     }
+
+
+def test_mark_is_noop() -> None:
+    pose = Pose(position=np.array([1.0, 2.0, 3.0]))
+    assert apply_action(pose, Action.MARK, _SPACE) == pose
 
 
 def test_action_space_from_bounds_scales_with_diagonal() -> None:

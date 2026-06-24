@@ -19,6 +19,7 @@ import numpy as np
 
 from gaussian_robot.events import (
     EventSink,
+    MarkEvent,
     SceneDescribeEvent,
     SessionEndEvent,
     SessionStartEvent,
@@ -87,6 +88,7 @@ class WalkResult:
     walk_id: str
     steps: list[WalkStep] = field(default_factory=list)
     stop_reason: str = ""
+    marks: list[Pose] = field(default_factory=list)  # poses the VLM flagged to fill in
 
     @property
     def poses(self) -> list[Pose]:
@@ -128,6 +130,7 @@ class Explorer:
     session_policies: list[SessionStopPolicy] = field(default_factory=list)
     max_steps: int = 40
     event_sink: EventSink | None = None
+    _marks_total: int = 0  # running count of VLM-marked fill-in poses this session
 
     def _describe_step(
         self,
@@ -156,6 +159,39 @@ class Explorer:
             )
         )
         return description
+
+    def _mark_step(
+        self,
+        robot: Robot,
+        result: WalkResult,
+        action_history: list[str],
+        *,
+        walk_id: str,
+        step: int,
+        raw_text: str = "",
+    ) -> None:
+        """Record the current viewpoint as a proposed fill-in pose (the deliverable)."""
+        self._marks_total += 1
+        result.marks.append(robot.pose)
+        action_history.append(Action.MARK.value)
+        result.steps.append(
+            WalkStep(
+                pose=robot.pose,
+                action=Action.MARK,
+                novelty=0.0,
+                degenerate=False,
+                raw_text=raw_text,
+            )
+        )
+        if self.event_sink is not None:
+            self.event_sink(
+                MarkEvent(
+                    walk_id=walk_id,
+                    step=step,
+                    floor=floor_xy(robot.pose.position, self.scene.up_axis)[0],
+                    count=self._marks_total,
+                )
+            )
 
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, walk_id: str = ""
@@ -201,6 +237,17 @@ class Explorer:
 
             if action is Action.DESCRIBE:
                 scene_description = self._describe_step(
+                    robot,
+                    result,
+                    action_history,
+                    walk_id=walk_id,
+                    step=step_idx + 1,
+                    raw_text=decision.raw_text,
+                )
+                continue
+
+            if action is Action.MARK:
+                self._mark_step(
                     robot,
                     result,
                     action_history,
@@ -298,6 +345,7 @@ class Explorer:
         ``requested_seeds`` is how many were asked for (defaults to the number
         actually launched) so the UI can report rejections.
         """
+        self._marks_total = 0
         if self.event_sink is not None:
             self.event_sink(
                 SessionStartEvent(

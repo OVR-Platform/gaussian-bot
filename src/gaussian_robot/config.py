@@ -72,6 +72,11 @@ class RunConfig(BaseModel):
         default=120, ge=1, description="Max steps per walk. Higher = longer, deeper walks."
     )
     pose_budget: int = Field(default=400, ge=1)
+    pose_target: int = Field(
+        default=30,
+        ge=1,
+        description="Target number of fill-in poses to mark (informational goal, not a stop).",
+    )
     num_seeds: int = Field(
         default=3,
         ge=1,

@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from gaussian_robot.events import (
+    MarkEvent,
     SceneDescribeEvent,
     SessionEndEvent,
     SessionStartEvent,
@@ -18,7 +19,7 @@ from gaussian_robot.events import (
 from gaussian_robot.vlm.qwen import jpeg_data_url
 
 
-def event_to_message(event: Any) -> dict[str, Any]:
+def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return per event type)
     if isinstance(event, SessionStartEvent):
         return {
             "type": "session_start",
@@ -48,6 +49,14 @@ def event_to_message(event: Any) -> dict[str, Any]:
             "panels": panels,
             "sampled": event.sampled_floor.tolist(),
             "trail": event.trail_floor.tolist(),
+        }
+    if isinstance(event, MarkEvent):
+        return {
+            "type": "mark",
+            "walk_id": event.walk_id,
+            "step": event.step,
+            "floor": event.floor.tolist(),
+            "count": event.count,
         }
     if isinstance(event, WalkEndEvent):
         return {

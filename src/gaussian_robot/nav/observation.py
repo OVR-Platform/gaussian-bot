@@ -155,9 +155,13 @@ class ObservationBuilder:
         "3. Don't chase blur for its own sake: blur from being too close to a surface is not a "
         "gap. Only under-observed OPEN regions (the gap marker, dark [confidence] holes you can "
         "approach) are worth reaching.\n"
-        "4. LOOK_UP / LOOK_DOWN to check ceilings/floors when entering a new area; DESCRIBE if "
+        "4. MARK when you are positioned with a clear, head-on view of a gap that needs filling: "
+        "this records your current viewpoint as a proposed NEW VIEW for the reconstruction — the "
+        "actual deliverable. Mark once per distinct gap, after you've framed it well; then move on "
+        "to the next gap. Don't mark walls/obstacles or views you're too close to.\n"
+        "5. LOOK_UP / LOOK_DOWN to check ceilings/floors when entering a new area; DESCRIBE if "
         "disoriented.\n"
-        "5. Check [history]: patterns like forward,back,forward,back mean you are oscillating "
+        "6. Check [history]: patterns like forward,back,forward,back mean you are oscillating "
         "against an obstacle — break out by turning toward the gap bearing.\n"
         "\n"
         "STOPPING:\n"
@@ -165,7 +169,7 @@ class ObservationBuilder:
         "- Only stop when there is no gap in range AND coverage is high. A wall or dead end is "
         "never a reason to stop — turn around.\n"
         "\n"
-        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|look_up|look_down|describe|stop>"}.'
+        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|look_up|look_down|mark|describe|stop>"}.'
     )
 
     def build(

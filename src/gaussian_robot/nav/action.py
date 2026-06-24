@@ -27,6 +27,7 @@ class Action(StrEnum):
     MOVE_UP = "move_up"
     MOVE_DOWN = "move_down"
     DESCRIBE = "describe"
+    MARK = "mark"
     STOP = "stop"
 
     @classmethod
@@ -117,8 +118,8 @@ def apply_action(
     the camera stops short of obstacles instead of penetrating geometry. It does
     not affect ``BACK`` (rear clearance is unknown).
     """
-    if action in (Action.STOP, Action.DESCRIBE):
-        return pose
+    if action in (Action.STOP, Action.DESCRIBE, Action.MARK):
+        return pose  # MARK records the current viewpoint; it does not move the robot
 
     if action in (Action.FORWARD, Action.BACK):
         heading = pose.heading(up_axis)
