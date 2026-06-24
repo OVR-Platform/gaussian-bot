@@ -71,6 +71,18 @@ def test_validate_seed_poses_skips_blurry_real_views() -> None:
     assert all(s.kind == "capture" for s in seeds)
 
 
+def test_validate_seed_poses_honours_num_seeds_despite_tight_spacing() -> None:
+    # four sharp candidates all within the 8*step spacing window; num_seeds must still be met
+    candidates = [
+        SeedPose(pose=Pose(position=np.array([float(x), 0.0, 0.0])), kind="capture")
+        for x in range(4)
+    ]
+    seeds = validate_seed_poses(
+        _SharpnessRenderer(), candidates, num_seeds=3, step=1.0, strict=False
+    )
+    assert len(seeds) == 3  # spacing-held candidates top up to the requested count
+
+
 def test_validate_seed_poses_prefers_seeds_near_a_frontier() -> None:
     grid = np.full((8, 8), 0.6)
     grid[2, 2] = 0.05  # one interior gap -> frontier at world ~ (3.125, 3.125)

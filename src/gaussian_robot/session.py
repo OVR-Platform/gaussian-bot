@@ -673,8 +673,9 @@ def validate_seed_poses(
         ]
         sharp_floor = float(np.median(valid_sharps)) if valid_sharps else 0.0
 
-    min_spacing = step * 8.0  # keep selected seeds at least a local window apart
+    min_spacing = step * 8.0  # prefer selected seeds at least a local window apart
     seeds: list[SeedPose] = []
+    spacing_held: list[SeedPose] = []  # valid but too close to a kept seed — used to top up
     for s, finite_frac, median_depth, alpha_mean, sharp in ordered:
         if len(seeds) >= num_seeds:
             break
@@ -686,7 +687,13 @@ def validate_seed_poses(
             continue  # skip the blurriest real views; a sharper spread one remains
         xz = s.pose.position[[0, 2]]
         if any(float(np.linalg.norm(xz - t.pose.position[[0, 2]])) < min_spacing for t in seeds):
-            continue  # avoid clustering several seeds on the same gap
+            spacing_held.append(s)  # would cluster — hold in case we need to reach num_seeds
+            continue
+        seeds.append(s)
+    # Honour num_seeds: if the spacing left us short, top up with the held (closer) seeds.
+    for s in spacing_held:
+        if len(seeds) >= num_seeds:
+            break
         seeds.append(s)
     return seeds or [ordered[0][0]]
 
