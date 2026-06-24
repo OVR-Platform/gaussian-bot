@@ -62,25 +62,6 @@ class StopPolicy(Protocol):
 
 
 @dataclass
-class StepBudget:
-    """Hard cap on steps per walk (safety net)."""
-
-    max_steps: int = 40
-    reason: str = "step_budget"
-
-    def __post_init__(self) -> None:
-        if self.max_steps <= 0:
-            raise ValueError("max_steps must be positive")
-
-    def reset(self) -> None: ...
-
-    def update(self, ctx: WalkContext) -> None: ...
-
-    def should_stop(self) -> bool:
-        return False  # checked via the running step count by the explorer
-
-
-@dataclass
 class BoundsGuard:
     """Stops when a render is degenerate (out of bounds / empty)."""
 

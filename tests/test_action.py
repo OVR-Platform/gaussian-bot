@@ -63,6 +63,22 @@ def test_turn_left_yaws_around_up_axis() -> None:
     assert np.allclose(new_forward, [-np.sin(np.deg2rad(30.0)), 0.0, np.cos(np.deg2rad(30.0))])
 
 
+def test_turn_chirality_is_mirrored_under_negative_up_axis() -> None:
+    pose = Pose(position=np.zeros(3))  # forward +Z
+    left_y = apply_action(pose, Action.TURN_LEFT, _SPACE, up_axis="y").forward()
+    left_negy = apply_action(pose, Action.TURN_LEFT, _SPACE, up_axis="-y").forward()
+    assert abs(left_y[1]) < 1e-9 and abs(left_negy[1]) < 1e-9  # both stay horizontal
+    # flipping the up axis flips the turn handedness (mirror across the forward axis)
+    assert np.allclose(left_negy, [-left_y[0], 0.0, left_y[2]])
+
+
+def test_turn_left_then_right_is_identity_under_negative_up_axis() -> None:
+    pose = Pose(position=np.zeros(3))
+    turned = apply_action(pose, Action.TURN_LEFT, _SPACE, up_axis="-y")
+    back = apply_action(turned, Action.TURN_RIGHT, _SPACE, up_axis="-y")
+    assert np.allclose(back.rotation, pose.rotation)
+
+
 def test_forward_stays_level_when_looking_up() -> None:
     pose = Pose(position=np.zeros(3))
     looking_up = apply_action(pose, Action.LOOK_UP, _SPACE, up_axis="y")

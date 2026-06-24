@@ -59,6 +59,12 @@ _FLOOR_PLANE = {0: (1, 2), 1: (0, 2), 2: (0, 1)}
 # numpy PRNG seed — unrelated to the SeedPoses that walks start from.
 _RNG_SEED = 42
 
+# Seed validation thresholds. Stricter than the mid-walk degeneracy bar
+# (_WALK_MIN_FINITE_FRAC = 0.25 in nav/explorer.py): a seed must *start* looking at
+# solid, reconstructed geometry, whereas mid-walk we tolerate openness/sky.
+_SEED_MIN_FINITE_FRAC = 0.5
+_SEED_MIN_ALPHA = 0.15
+
 
 def _floor_axes(up_axis: str) -> tuple[int, int]:
     """The two world axes spanning the floor plane (orthogonal to up)."""
@@ -668,14 +674,18 @@ def validate_seed_poses(
         sharp_floor = 0.0
     else:
         ordered = scored  # preserve farthest-point spread
-        valid_sharps = [sh for (_, ff, _, a, sh) in scored if ff >= 0.5 and a >= 0.15]
+        valid_sharps = [
+            sh
+            for (_, ff, _, a, sh) in scored
+            if ff >= _SEED_MIN_FINITE_FRAC and a >= _SEED_MIN_ALPHA
+        ]
         sharp_floor = float(np.median(valid_sharps)) if valid_sharps else 0.0
 
     seeds: list[SeedPose] = []
     for s, finite_frac, median_depth, alpha_mean, sharp in ordered:
         if len(seeds) >= num_seeds:
             break
-        if finite_frac < 0.5 or alpha_mean < 0.15:
+        if finite_frac < _SEED_MIN_FINITE_FRAC or alpha_mean < _SEED_MIN_ALPHA:
             continue
         if strict and median_depth < step:
             continue

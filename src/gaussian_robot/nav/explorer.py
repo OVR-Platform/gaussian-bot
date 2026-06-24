@@ -95,8 +95,23 @@ class WalkResult:
         return [s.pose for s in self.steps]
 
 
-def _render_degenerate(result: RenderResult, *, min_finite_frac: float = 0.25) -> bool:
-    """Heuristic: a render is degenerate if depth is mostly non-finite."""
+# A mid-walk view is "degenerate" only when it is *mostly* into the void. This is
+# deliberately more lenient than seed validation (_SEED_MIN_FINITE_FRAC in session.py,
+# 0.5): a seed must start on solid geometry, but mid-walk we tolerate partial sky/
+# openness so the robot can cross open areas without the walk being killed.
+_WALK_MIN_FINITE_FRAC = 0.25
+
+
+def _render_degenerate(
+    result: RenderResult, *, min_finite_frac: float = _WALK_MIN_FINITE_FRAC
+) -> bool:
+    """Heuristic: a render is degenerate if depth is mostly non-finite.
+
+    Note: ``BoundsGuard`` evaluates this on the *current* view (the render the
+    observation was built from), so an empty view is caught the step after the robot
+    enters it; an out-of-AABB ``next_pose`` is caught immediately by the bounds test
+    in :meth:`Explorer._is_degenerate`.
+    """
     if result.depth is None:
         return False
     finite_frac: float = float(np.isfinite(result.depth).mean())
