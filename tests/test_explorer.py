@@ -242,6 +242,16 @@ def test_mark_records_pose_and_emits_event_without_moving() -> None:
     assert len(state) == 1  # mark neither moves the robot nor adds coverage
 
 
+def _render(alpha_mean: float) -> RenderResult:
+    n = 8
+    return RenderResult(
+        rgb=np.zeros((n, n, 3), dtype=np.uint8),
+        camera=Camera(pose=Pose(), intrinsics=_INTR),
+        depth=np.full((n, n), 5.0, dtype=np.float32),
+        alpha=np.full((n, n), alpha_mean, dtype=np.float32),
+    )
+
+
 def test_auto_mark_records_when_standing_in_a_frontier() -> None:
     explorer = _explorer([Action.STOP])  # coverage_radius = 1.0
     explorer.observation_builder.nearest_gap = lambda pose: (1.0, 80.0)  # type: ignore[method-assign]
@@ -249,18 +259,28 @@ def test_auto_mark_records_when_standing_in_a_frontier() -> None:
     explorer.event_sink = events.append
     result = WalkResult(walk_id="walk0")
     robot = Robot(scene=_scene(), pose=Pose(position=np.array([5.0, 0.0, 5.0])))
-    explorer._maybe_auto_mark(robot, result, walk_id="walk0", step=3)  # at a gap, facing irrelevant
+    # at a frontier -> marked even with an empty (sky) view and facing irrelevant
+    explorer._maybe_auto_mark(robot, result, _render(0.0), walk_id="walk0", step=3)
     assert len(result.marks) == 1
     auto = [e for e in events if isinstance(e, MarkEvent) and e.auto]
     assert auto and auto[0].count == 1
 
 
-def test_auto_mark_skips_when_no_frontier_nearby() -> None:
-    explorer = _explorer([Action.STOP])  # coverage_radius = 1.0
+def test_auto_mark_records_a_view_with_geometry_along_the_trail() -> None:
+    explorer = _explorer([Action.STOP])
+    explorer.observation_builder.nearest_gap = lambda pose: (50.0, 0.0)  # type: ignore[method-assign]
+    result = WalkResult(walk_id="walk0")
+    robot = Robot(scene=_scene(), pose=Pose(position=np.array([5.0, 0.0, 5.0])))
+    explorer._maybe_auto_mark(robot, result, _render(0.6), walk_id="walk0", step=1)  # solid view
+    assert len(result.marks) == 1
+
+
+def test_auto_mark_skips_empty_view_away_from_frontiers() -> None:
+    explorer = _explorer([Action.STOP])
+    explorer.observation_builder.nearest_gap = lambda pose: (50.0, 0.0)  # type: ignore[method-assign]
     result = WalkResult(walk_id="walk0")
     robot = Robot(scene=_scene(), pose=Pose())
-    explorer.observation_builder.nearest_gap = lambda pose: (5.0, 10.0)  # type: ignore[method-assign]
-    explorer._maybe_auto_mark(robot, result, walk_id="walk0", step=1)  # nearest gap too far
+    explorer._maybe_auto_mark(robot, result, _render(0.05), walk_id="walk0", step=1)  # near-empty
     assert not result.marks
 
 

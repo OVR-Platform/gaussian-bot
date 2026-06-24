@@ -239,21 +239,23 @@ class Explorer:
         self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=False)
 
     def _maybe_auto_mark(
-        self, robot: Robot, result: WalkResult, *, walk_id: str, step: int
+        self, robot: Robot, result: WalkResult, render: RenderResult, *, walk_id: str, step: int
     ) -> None:
-        """Auto-mark the current pose when it sits *in* an under-sampled region.
+        """Auto-mark this viewpoint so the deliverable populates as the robot explores.
 
-        Marks by location, not by facing: if the nearest reconstruction frontier is within
-        a coverage radius (the robot is standing in/at a gap), record this viewpoint.
-        Guarantees the deliverable populates as the robot traverses under-covered areas,
-        even when the VLM never emits MARK. Dedupes against existing marks (in _record_mark).
+        Records a fill-in pose when the view shows real geometry (not empty sky) — and
+        always when standing in a reconstruction frontier. Deduped by the coverage radius
+        in :meth:`_record_mark`, so marks spread roughly one radius apart along the path.
+        This guarantees a non-empty deliverable even when the VLM never emits MARK; reaching
+        the *most* valuable (under-sampled) regions still depends on exploration getting there.
         """
         if not self.auto_mark:
             return
         gap = self.observation_builder.nearest_gap(robot.pose)
-        if gap is None or gap[0] > self.coverage_radius:
-            return
-        self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=True)
+        at_frontier = gap is not None and gap[0] <= self.coverage_radius
+        has_geometry = render.alpha is None or float(render.alpha.mean()) > 0.15
+        if at_frontier or has_geometry:
+            self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=True)
 
     def _render_tween(
         self, a: Pose | None, b: Pose, intrinsics: CameraIntrinsics
@@ -291,7 +293,7 @@ class Explorer:
         conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
         coverage.add_pose(next_pose, walk_id=walk_id, confidence=conf)
         trail.append(next_pose)
-        self._maybe_auto_mark(robot, result, walk_id=walk_id, step=step)
+        self._maybe_auto_mark(robot, result, render, walk_id=walk_id, step=step)
 
     def _seed_eye_offset(self, seed_pose: Pose) -> float | None:
         """Height of the seed camera above its local ground (None if unavailable)."""
