@@ -36,7 +36,7 @@ from gaussian_robot.filters.pose_filters import FilteredPose, filter_poses
 from gaussian_robot.metrics.coverage import CoverageState, PoseSample
 from gaussian_robot.nav.action import ActionSpace
 from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
-from gaussian_robot.nav.observation import ObservationBuilder
+from gaussian_robot.nav.observation import ObservationBuilder, frontier_floor_positions
 from gaussian_robot.nav.stop import (
     BoundsGuard,
     CoveragePlateau,
@@ -645,14 +645,22 @@ def validate_seed_poses(
     re-ranked by render quality (median depth x alpha) so the best guesses are
     tried first, and an extra median-depth floor rejects views buried in geometry.
 
-    When not ``strict`` (capture-pose seeds), the incoming farthest-point order is
-    preserved for spatial diversity, but views whose sharpness is below the median
-    of the candidate pool are skipped — so a real but blurry/under-reconstructed
-    capture view doesn't become a seed while sharper, equally-spread ones exist.
+    When not ``strict`` (capture-pose seeds), candidates are ordered by proximity to
+    the nearest reconstruction frontier, so walks START near the gaps they should
+    fill; blurry views (sharpness below the pool median) are skipped, and selected
+    seeds are de-duplicated by a local-window spacing so they don't all cluster on
+    one gap. With no frontiers, the original farthest-point spread order is kept.
     """
     from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
     intrinsics = _PREVIEW_INTRINSICS
+    frontiers = frontier_floor_positions(renderer)
+
+    def _frontier_dist(seed: SeedPose) -> float:
+        if frontiers.shape[0] == 0:
+            return 0.0  # no weighting: keep input (farthest-point) order via stable sort
+        xz = seed.pose.position[[0, 2]]
+        return float(np.min(((frontiers - xz) ** 2).sum(axis=1)))
 
     # Render every candidate once and cache its metrics (avoids double-rendering).
     scored: list[tuple[SeedPose, float, float, float, float]] = []
@@ -673,7 +681,7 @@ def validate_seed_poses(
         ordered = sorted(scored, key=lambda it: it[2] * it[3], reverse=True)
         sharp_floor = 0.0
     else:
-        ordered = scored  # preserve farthest-point spread
+        ordered = sorted(scored, key=lambda it: _frontier_dist(it[0]))  # nearest-to-gap first
         valid_sharps = [
             sh
             for (_, ff, _, a, sh) in scored
@@ -681,6 +689,7 @@ def validate_seed_poses(
         ]
         sharp_floor = float(np.median(valid_sharps)) if valid_sharps else 0.0
 
+    min_spacing = step * 8.0  # keep selected seeds at least a local window apart
     seeds: list[SeedPose] = []
     for s, finite_frac, median_depth, alpha_mean, sharp in ordered:
         if len(seeds) >= num_seeds:
@@ -691,6 +700,9 @@ def validate_seed_poses(
             continue
         if not strict and sharp < sharp_floor:
             continue  # skip the blurriest real views; a sharper spread one remains
+        xz = s.pose.position[[0, 2]]
+        if any(float(np.linalg.norm(xz - t.pose.position[[0, 2]])) < min_spacing for t in seeds):
+            continue  # avoid clustering several seeds on the same gap
         seeds.append(s)
     return seeds or [ordered[0][0]]
 

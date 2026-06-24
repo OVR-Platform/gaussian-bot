@@ -7,6 +7,7 @@ import types
 import numpy as np
 
 from gaussian_robot.nav.observation import (
+    _line_of_sight_clear,
     _rotation_streak,
     frontier_floor_positions,
     frontier_mask,
@@ -52,6 +53,15 @@ def test_frontier_floor_positions_maps_cells_into_bounds() -> None:
 
 def test_frontier_floor_positions_empty_without_cloud() -> None:
     assert frontier_floor_positions(types.SimpleNamespace()).shape == (0, 2)
+
+
+def test_line_of_sight_blocked_by_dense_cell() -> None:
+    grid = np.zeros((10, 10))
+    grid[5, :] = 1.0  # an occupied wall at x-bin 5
+    bounds = (np.zeros(3), np.array([10.0, 10.0, 10.0]))
+    # a path crossing x=5 is blocked; one that stays on the near side is clear
+    assert not _line_of_sight_clear(np.array([1.0, 1.0]), np.array([9.0, 1.0]), grid, bounds, 0.9)
+    assert _line_of_sight_clear(np.array([1.0, 1.0]), np.array([4.0, 1.0]), grid, bounds, 0.9)
 
 
 def test_rotation_streak_counts_trailing_turns() -> None:

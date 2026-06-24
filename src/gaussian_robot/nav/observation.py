@@ -84,6 +84,36 @@ def frontier_mask(
     return (density_grid < under_max) & adj
 
 
+def _line_of_sight_clear(
+    a: np.ndarray,
+    b: np.ndarray,
+    grid: np.ndarray,
+    bounds: tuple[np.ndarray, np.ndarray],
+    occ_threshold: float,
+    *,
+    samples: int = 24,
+) -> bool:
+    """True if the floor segment ``a -> b`` (world x,z) avoids occupied cells.
+
+    Heuristic reachability: a cell is "occupied" (a wall/tree/solid you can't cross)
+    when its top-down density is ``>= occ_threshold``. Samples the segment interior
+    (endpoints skipped — the gap is sparse by definition, the agent sits in free
+    space). A coarse proxy on a top-down grid, used only to *prefer* a reachable gap.
+    """
+    lo, hi = bounds
+    wx, wz = hi[0] - lo[0], hi[2] - lo[2]
+    g = grid.shape[0]
+    if wx <= 0 or wz <= 0:
+        return True
+    for t in np.linspace(0.1, 0.9, samples):
+        p = a * (1 - t) + b * t
+        ix = int((p[0] - lo[0]) / wx * g)
+        iz = int((p[1] - lo[2]) / wz * g)
+        if 0 <= ix < g and 0 <= iz < g and grid[ix, iz] >= occ_threshold:
+            return False
+    return True
+
+
 def frontier_floor_positions(renderer: Renderer) -> np.ndarray:
     """World floor ``(K, 2)`` centres of every reconstruction frontier cell.
 
@@ -340,12 +370,26 @@ class ObservationBuilder:
         return "; ".join(parts)
 
     def _nearest_gap(self, cur_floor: np.ndarray) -> np.ndarray | None:
-        """World floor ``(x, z)`` of the nearest reconstruction frontier, or None."""
+        """World floor ``(x, z)`` of the best nearby reconstruction frontier, or None.
+
+        Prefers the nearest frontier reachable by a clear straight path (no occupied
+        cells crossed); falls back to the plain nearest frontier when none is clear.
+        """
         pts = frontier_floor_positions(self.renderer)
         if pts.shape[0] == 0:
             return None
-        d2 = ((pts - cur_floor) ** 2).sum(axis=1)
-        return np.asarray(pts[int(np.argmin(d2))], dtype=np.float64)
+        order = np.argsort(((pts - cur_floor) ** 2).sum(axis=1))
+        cloud = getattr(self.renderer, "cloud", None)
+        grid = getattr(cloud, "density_grid", None)
+        db = getattr(cloud, "density_bounds", None)
+        if grid is not None and db is not None:
+            dense = grid[grid > 0.1]
+            if dense.size:
+                occ = float(np.quantile(dense, 0.85))  # top ~15% density = likely solid
+                for i in order[:24]:  # check only the nearest handful
+                    if _line_of_sight_clear(cur_floor, pts[i], grid, db, occ):
+                        return np.asarray(pts[i], dtype=np.float64)
+        return np.asarray(pts[int(order[0])], dtype=np.float64)
 
     def nearest_gap(self, pose: Pose) -> tuple[float, float] | None:
         """(distance, signed bearing°) to the nearest frontier from ``pose``, or None."""

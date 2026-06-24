@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import types
+
 import numpy as np
 
 from gaussian_robot.nav.explorer import SeedPose
@@ -36,14 +38,30 @@ def test_sharpness_separates_flat_from_textured() -> None:
     assert _sharpness(_textured()) > _sharpness(_flat())
 
 
+class _CloudRenderer:
+    """Crisp render everywhere, plus a density grid with one interior gap."""
+
+    def __init__(self, grid: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> None:
+        self.cloud = types.SimpleNamespace(density_grid=grid, density_bounds=(lo, hi))
+
+    def render(self, camera: Camera) -> RenderResult:
+        n = 16
+        return RenderResult(
+            rgb=_textured(n),
+            camera=camera,
+            depth=np.full((n, n), 5.0, dtype=np.float32),
+            alpha=np.ones((n, n), dtype=np.float32),
+        )
+
+
 def test_validate_seed_poses_skips_blurry_real_views() -> None:
-    # Two blurry (x<0) and two sharp (x>=0) capture-like candidates. Non-strict
-    # selection must drop the blurry ones below the sharpness floor, keeping kind.
+    # Two blurry (x<0) and two sharp (x>=0) capture-like candidates, spaced well apart
+    # (> the 8*step dedup window). Non-strict selection drops the blurry ones.
     candidates = [
-        SeedPose(pose=Pose(position=np.array([-1.0, 0.0, 0.0])), kind="capture"),
-        SeedPose(pose=Pose(position=np.array([-2.0, 0.0, 0.0])), kind="capture"),
-        SeedPose(pose=Pose(position=np.array([1.0, 0.0, 0.0])), kind="capture"),
-        SeedPose(pose=Pose(position=np.array([2.0, 0.0, 0.0])), kind="capture"),
+        SeedPose(pose=Pose(position=np.array([-10.0, 0.0, 0.0])), kind="capture"),
+        SeedPose(pose=Pose(position=np.array([-20.0, 0.0, 0.0])), kind="capture"),
+        SeedPose(pose=Pose(position=np.array([10.0, 0.0, 0.0])), kind="capture"),
+        SeedPose(pose=Pose(position=np.array([20.0, 0.0, 0.0])), kind="capture"),
     ]
     seeds = validate_seed_poses(
         _SharpnessRenderer(), candidates, num_seeds=2, step=1.0, strict=False
@@ -51,3 +69,14 @@ def test_validate_seed_poses_skips_blurry_real_views() -> None:
     assert len(seeds) == 2
     assert all(s.pose.position[0] >= 0 for s in seeds)  # only the sharp views seed
     assert all(s.kind == "capture" for s in seeds)
+
+
+def test_validate_seed_poses_prefers_seeds_near_a_frontier() -> None:
+    grid = np.full((8, 8), 0.6)
+    grid[2, 2] = 0.05  # one interior gap -> frontier at world ~ (3.125, 3.125)
+    renderer = _CloudRenderer(grid, np.zeros(3), np.array([10.0, 10.0, 10.0]))
+    far = SeedPose(pose=Pose(position=np.array([9.0, 0.0, 9.0])), kind="capture")
+    near = SeedPose(pose=Pose(position=np.array([3.0, 0.0, 3.0])), kind="capture")
+    seeds = validate_seed_poses(renderer, [far, near], num_seeds=1, step=1.0, strict=False)
+    assert len(seeds) == 1
+    assert np.allclose(seeds[0].pose.position, [3.0, 0.0, 3.0])  # the gap-near seed wins
