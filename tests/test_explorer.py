@@ -391,9 +391,12 @@ def test_marks_are_deduped_by_coverage_radius() -> None:
     assert len(result.marks) == 2
 
 
+# Six gaussians in cell (5,5) so it clears the height-field support threshold (min_count=4).
+_GROUND_MEANS = np.array([[5.0, float(h), 5.0] for h in (0, 0, 1, 1, 2, 2)])
+
+
 def test_follow_terrain_sets_camera_above_local_ground() -> None:
-    means = np.array([[5.0, 0.0, 5.0], [5.0, 1.0, 5.0], [5.0, 2.0, 5.0]])  # ground near (5,5)
-    hf = build_height_field(means, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
+    hf = build_height_field(_GROUND_MEANS, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
     explorer = _explorer([Action.STOP])  # action_space.step == 1.0
     explorer.height_field = hf
     explorer._eye_offset = 1.5
@@ -408,14 +411,14 @@ def test_follow_terrain_sets_camera_above_local_ground() -> None:
 def test_follow_terrain_clamps_a_large_vertical_jump() -> None:
     # A bad edge/sparse cell would otherwise teleport the camera vertically (the observed
     # forward y -2.0 -> 1.1 bug). One step may only correct by ~one step length.
-    means = np.array([[5.0, 0.0, 5.0], [5.0, 1.0, 5.0], [5.0, 2.0, 5.0]])
-    hf = build_height_field(means, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
+    hf = build_height_field(_GROUND_MEANS, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
     explorer = _explorer([Action.STOP])  # action_space.step == 1.0
     explorer.height_field = hf
     explorer._eye_offset = 1.5
+    ground = hf.ground(5.0, 5.0)
+    assert ground is not None
     adjusted = explorer._follow_terrain(Pose(position=np.array([5.0, 9.0, 5.0])))
-    # ground+eye ~ 1.9, current 9.0 -> raw delta ~ -7.1, clamped to -1.0 (one step).
-    assert adjusted.position[1] == pytest.approx(8.0)  # 9.0 - step, not teleported to ~1.9
+    assert adjusted.position[1] == pytest.approx(8.0)  # 9.0 - step, not teleported to ground+eye
 
 
 def test_render_is_runtime_checkable() -> None:

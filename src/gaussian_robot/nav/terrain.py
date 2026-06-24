@@ -80,6 +80,8 @@ def build_height_field(
     *,
     grid_size: int = 48,
     ground_q: float = 0.2,
+    min_count: int = 4,
+    min_frac: float = 0.1,
 ) -> HeightField:
     """Build a ground-height field from gaussian ``means`` (``(N, 3)`` world points).
 
@@ -87,6 +89,12 @@ def build_height_field(
     (``means @ up``) of the gaussians binned into it — a low percentile picks the
     floor rather than walls/canopy above it, while being robust to a few stray
     below-ground floaters.
+
+    A cell is left ``NaN`` (unknown) unless it has real support: at least ``min_count``
+    gaussians **and** ``min_frac`` of the median per-cell count. Sparse edge cells (a
+    handful of floaters past the mapped area) give an unreliable "ground" that would drag
+    the camera down into the void as it walks out — leaving them unknown makes terrain-
+    following hold the last good height there instead of chasing a phantom slope.
     """
     up = up_vector(up_axis)
     g = grid_size
@@ -104,6 +112,9 @@ def build_height_field(
     flat_s, h_s = flat[order], heights[order]
     uniq, starts = np.unique(flat_s, return_index=True)
     ends = np.append(starts[1:], len(flat_s))
+    counts = ends - starts
+    support = max(min_count, int(np.ceil(min_frac * float(np.median(counts)))))
     for cell, s, e in zip(uniq, starts, ends, strict=True):
-        grid[cell] = float(np.quantile(h_s[s:e], ground_q))
+        if (e - s) >= support:  # only trust well-supported cells; sparse edges stay unknown
+            grid[cell] = float(np.quantile(h_s[s:e], ground_q))
     return HeightField(grid=grid.reshape(g, g), lo=lo, hi=hi, up_axis=up_axis)

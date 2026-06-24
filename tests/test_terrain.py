@@ -30,6 +30,17 @@ def test_ground_uses_signed_up_axis() -> None:
     assert hf.ground(1.0, 1.0) == pytest.approx(np.quantile([0, -1, -2, -3, -4], 0.2))
 
 
+def test_sparse_cell_is_left_unknown() -> None:
+    # A dense floor cell next to a sparse edge cell with only a couple of stray gaussians:
+    # the sparse cell must stay unknown so terrain-following doesn't trust its bogus ground.
+    lo, hi = np.zeros(3), np.array([10.0, 10.0, 10.0])
+    dense = _column(1.0, 1.0, list(np.linspace(0.0, 1.0, 40)))  # well-supported floor cell
+    sparse = _column(9.0, 9.0, [5.0, 6.0])  # 2 stray floaters at the far edge
+    hf = build_height_field(np.vstack([dense, sparse]), "y", lo, hi, grid_size=4)
+    assert hf.ground(1.0, 1.0) is not None  # dense cell trusted
+    assert hf.ground(9.0, 9.0) is None  # sparse edge cell left unknown (not a phantom slope)
+
+
 def test_empty_means_gives_all_unknown() -> None:
     hf = build_height_field(
         np.empty((0, 3)), "y", np.zeros(3), np.array([10.0, 10.0, 10.0]), grid_size=4
