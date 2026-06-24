@@ -9,9 +9,9 @@ from gaussian_robot.metrics.coverage import PoseSample
 from gaussian_robot.render.camera import Pose
 
 
-def _sample(x: float, z: float, *, confidence: float = 1.0, seed: str = "s") -> PoseSample:
+def _sample(x: float, z: float, *, confidence: float = 1.0, walk: str = "w") -> PoseSample:
     return PoseSample(
-        pose=Pose(position=np.array([x, 0.0, z])), seed_id=seed, confidence=confidence
+        pose=Pose(position=np.array([x, 0.0, z])), walk_id=walk, confidence=confidence
     )
 
 

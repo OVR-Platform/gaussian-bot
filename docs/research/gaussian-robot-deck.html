@@ -1,0 +1,1798 @@
+<style>
+/* ============================================================
+   SPLAT LAB — engineering deck design system
+   Dark, technical, high-density. System fonts only.
+   ============================================================ */
+
+:root{
+  /* ---- palette ---- */
+  --bg:        #0a0c12;          /* near-black indigo */
+  --bg-2:      #0e1119;          /* slide base */
+  --panel:     #141826;          /* cards / code blocks */
+  --panel-2:   #1a1f30;          /* raised */
+  --line:      #232a3d;          /* hairline borders */
+  --line-soft: #1b2030;
+
+  --ink:       #e7ecf6;          /* primary text */
+  --ink-dim:   #aab3c8;          /* secondary text */
+  --ink-mute:  #6c7790;          /* tertiary / captions */
+
+  /* splat accents — luminous points */
+  --cyan:      #46e6d0;
+  --cyan-dim:  #2bb3a4;
+  --magenta:   #ff5fa2;
+  --violet:    #8b7bff;
+  --amber:     #ffc764;
+  --green:     #7ce38b;
+  --red:       #ff6f6f;
+
+  --accent:    var(--cyan);
+  --accent-2:  var(--violet);
+
+  /* glows */
+  --glow-cyan:    0 0 0.4rem rgba(70,230,208,.55), 0 0 1.2rem rgba(70,230,208,.25);
+  --glow-violet:  0 0 0.5rem rgba(139,123,255,.45);
+
+  /* type */
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Menlo, Consolas, monospace;
+
+  /* rhythm */
+  --pad:      clamp(2rem, 4.5vw, 5rem);
+  --maxw:     1180px;
+  --radius:   14px;
+  --radius-s: 9px;
+
+  /* motion */
+  --ease: cubic-bezier(.22,.61,.36,1);
+  --dur:  .62s;
+}
+
+/* ---------- reset-ish ---------- */
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+html{ background:var(--bg); }
+body{
+  font-family:var(--sans);
+  color:var(--ink);
+  background:var(--bg);
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+  overflow-x:hidden;            /* never scroll horizontally */
+}
+
+/* ============================================================
+   SCROLL-SNAP DECK
+   .deck is the snapping container; each .slide snaps to start.
+   ============================================================ */
+.deck{
+  height:100vh;
+  height:100dvh;
+  overflow-y:auto;
+  overflow-x:hidden;
+  scroll-snap-type:y mandatory;
+  scroll-behavior:smooth;
+  scrollbar-width:none;
+}
+.deck::-webkit-scrollbar{ width:0; height:0; }
+
+/* ---------- SLIDE ---------- */
+.slide{
+  position:relative;
+  min-height:100vh;
+  min-height:100dvh;
+  scroll-snap-align:start;
+  scroll-snap-stop:always;
+  display:flex;
+  flex-direction:column;
+  justify-content:center;
+  padding:var(--pad);
+  background:
+    radial-gradient(900px 600px at 82% -8%, rgba(139,123,255,.10), transparent 60%),
+    radial-gradient(720px 520px at -6% 108%, rgba(70,230,208,.08), transparent 60%),
+    var(--bg-2);
+  overflow:hidden;
+}
+/* faint dotted "splat field" texture */
+.slide::before{
+  content:"";
+  position:absolute; inset:0;
+  background-image:radial-gradient(rgba(120,140,180,.12) 1px, transparent 1.4px);
+  background-size:30px 30px;
+  -webkit-mask-image:radial-gradient(120% 120% at 50% 40%, #000 30%, transparent 78%);
+          mask-image:radial-gradient(120% 120% at 50% 40%, #000 30%, transparent 78%);
+  opacity:.5;
+  pointer-events:none;
+}
+.slide__inner{
+  position:relative;
+  z-index:1;
+  width:100%;
+  max-width:var(--maxw);
+  margin:0 auto;
+}
+
+/* variant: cover / title slide */
+.slide--cover{ justify-content:center; }
+.slide--cover .slide__inner{ max-width:920px; }
+/* variant: centered content */
+.slide--center{ text-align:center; }
+.slide--center .slide__inner{ display:flex; flex-direction:column; align-items:center; }
+
+/* ============================================================
+   TYPOGRAPHY
+   ============================================================ */
+.kicker{
+  display:inline-flex; align-items:center; gap:.5rem;
+  font-family:var(--mono);
+  font-size:.72rem; font-weight:600;
+  letter-spacing:.18em; text-transform:uppercase;
+  color:var(--accent);
+  margin:0 0 1rem;
+}
+.kicker::before{
+  content:""; width:.5rem; height:.5rem; border-radius:50%;
+  background:var(--accent); box-shadow:var(--glow-cyan);
+}
+
+.slide__title{
+  font-size:clamp(1.7rem, 3.6vw, 2.9rem);
+  font-weight:700; line-height:1.1;
+  letter-spacing:-.015em;
+  margin:0 0 .65rem;
+  color:var(--ink);
+}
+.slide__subtitle{
+  font-size:clamp(1rem, 1.6vw, 1.22rem);
+  font-weight:400; color:var(--ink-dim);
+  margin:0 0 1.6rem; max-width:60ch;
+}
+.cover__title{
+  font-size:clamp(2.4rem, 6vw, 4.6rem);
+  font-weight:800; line-height:1.02; letter-spacing:-.03em;
+  margin:.4rem 0 .8rem;
+  background:linear-gradient(100deg,var(--ink) 30%,var(--cyan) 70%,var(--violet));
+  -webkit-background-clip:text; background-clip:text;
+  -webkit-text-fill-color:transparent; color:transparent;
+}
+.cover__meta{
+  font-family:var(--mono); font-size:.82rem; color:var(--ink-mute);
+  letter-spacing:.04em; margin-top:2rem;
+  display:flex; gap:1.4rem; flex-wrap:wrap;
+}
+
+.lead{ font-size:1.15rem; color:var(--ink-dim); max-width:62ch; }
+.muted{ color:var(--ink-mute); }
+.mono{ font-family:var(--mono); }
+.hl{ color:var(--accent); }
+.hl-2{ color:var(--accent-2); }
+.hl-w{ color:var(--ink); font-weight:600; }
+
+p{ margin:0 0 .9rem; color:var(--ink-dim); }
+strong{ color:var(--ink); font-weight:600; }
+em{ color:var(--accent); font-style:normal; }
+a{ color:var(--accent); text-decoration:none; border-bottom:1px solid var(--line); }
+
+/* ============================================================
+   LAYOUT HELPERS
+   ============================================================ */
+.grid-2{ display:grid; grid-template-columns:repeat(2,1fr); gap:1.1rem; }
+.grid-3{ display:grid; grid-template-columns:repeat(3,1fr); gap:1.1rem; }
+.grid-4{ display:grid; grid-template-columns:repeat(4,1fr); gap:.9rem; }
+.cols{ display:grid; grid-template-columns:1fr 1fr; gap:clamp(1.5rem,3vw,3rem); align-items:center; }
+.stack{ display:flex; flex-direction:column; gap:1rem; }
+.row{ display:flex; gap:.7rem; flex-wrap:wrap; align-items:center; }
+.spread{ display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap; }
+@media (max-width:780px){
+  .grid-2,.grid-3,.grid-4,.cols{ grid-template-columns:1fr; }
+}
+
+/* ============================================================
+   CARD / PANEL
+   ============================================================ */
+.card{
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));
+  border:1px solid var(--line);
+  border-radius:var(--radius);
+  padding:1.3rem 1.4rem;
+  position:relative;
+}
+.card--accent{ border-color:rgba(70,230,208,.35); box-shadow:inset 0 0 0 1px rgba(70,230,208,.06); }
+.card__num{
+  font-family:var(--mono); font-size:.72rem; color:var(--accent);
+  letter-spacing:.1em;
+}
+.card__title{ font-size:1.05rem; font-weight:650; margin:.15rem 0 .5rem; color:var(--ink); }
+.card__body{ font-size:.92rem; color:var(--ink-dim); }
+.card__icon{
+  width:2.1rem; height:2.1rem; border-radius:8px; margin-bottom:.7rem;
+  display:grid; place-items:center; font-size:1.1rem;
+  background:rgba(70,230,208,.10); border:1px solid rgba(70,230,208,.25);
+  color:var(--accent);
+}
+
+/* ============================================================
+   PILL / BADGE / TAG
+   ============================================================ */
+.pill{
+  display:inline-flex; align-items:center; gap:.4rem;
+  font-family:var(--mono); font-size:.74rem; font-weight:600;
+  letter-spacing:.04em;
+  padding:.3rem .65rem; border-radius:999px;
+  background:rgba(139,123,255,.12);
+  border:1px solid rgba(139,123,255,.3);
+  color:var(--violet);
+}
+.pill--cyan{ background:rgba(70,230,208,.12); border-color:rgba(70,230,208,.3); color:var(--cyan); }
+.pill--amber{ background:rgba(255,199,100,.12); border-color:rgba(255,199,100,.3); color:var(--amber); }
+.pill--green{ background:rgba(124,227,139,.12); border-color:rgba(124,227,139,.3); color:var(--green); }
+.pill--red{ background:rgba(255,111,111,.12); border-color:rgba(255,111,111,.3); color:var(--red); }
+.pill--ghost{ background:transparent; border-color:var(--line); color:var(--ink-mute); }
+
+/* status dot */
+.dot{ width:.55rem; height:.55rem; border-radius:50%; background:var(--accent); box-shadow:var(--glow-cyan); display:inline-block; }
+.dot--amber{ background:var(--amber); box-shadow:0 0 .4rem rgba(255,199,100,.6); }
+.dot--red{ background:var(--red); box-shadow:0 0 .4rem rgba(255,111,111,.6); }
+.dot--mute{ background:var(--ink-mute); box-shadow:none; }
+
+/* ============================================================
+   METRIC / STAT
+   ============================================================ */
+.stat{ display:flex; flex-direction:column; gap:.2rem; }
+.stat__value{
+  font-family:var(--mono); font-size:clamp(1.8rem,4vw,2.6rem);
+  font-weight:700; line-height:1; color:var(--ink);
+  text-shadow:var(--glow-cyan);
+}
+.stat__value.is-violet{ color:var(--violet); text-shadow:var(--glow-violet); }
+.stat__label{ font-size:.8rem; color:var(--ink-mute); letter-spacing:.03em; text-transform:uppercase; }
+
+/* ============================================================
+   LISTS
+   ============================================================ */
+.list{ list-style:none; padding:0; margin:0; display:flex; flex-direction:column; gap:.65rem; }
+.list li{ position:relative; padding-left:1.5rem; color:var(--ink-dim); }
+.list li::before{
+  content:""; position:absolute; left:.1rem; top:.55em;
+  width:.5rem; height:.5rem; border-radius:50%;
+  background:var(--accent); box-shadow:var(--glow-cyan);
+}
+.list--check li::before{
+  content:"\2713"; background:none; box-shadow:none; color:var(--green);
+  font-family:var(--mono); font-size:.85rem; top:0; left:0; width:auto; height:auto;
+}
+.list--num{ counter-reset:n; }
+.list--num li{ padding-left:2rem; }
+.list--num li::before{
+  counter-increment:n; content:counter(n,decimal-leading-zero);
+  background:none; box-shadow:none; color:var(--accent);
+  font-family:var(--mono); font-size:.78rem; font-weight:700;
+  top:.05em; left:0; width:auto; height:auto;
+}
+
+/* ============================================================
+   CODE
+   ============================================================ */
+.code{
+  font-family:var(--mono); font-size:.86rem; line-height:1.55;
+  background:#0b0e16; border:1px solid var(--line);
+  border-radius:var(--radius-s);
+  padding:1.1rem 1.2rem;
+  color:#c9d3e6;
+  overflow-x:auto;
+  white-space:pre;
+  tab-size:2;
+}
+.code__head{
+  display:flex; align-items:center; gap:.5rem;
+  font-family:var(--mono); font-size:.72rem; color:var(--ink-mute);
+  padding:.5rem .9rem; background:var(--panel);
+  border:1px solid var(--line); border-bottom:none;
+  border-radius:var(--radius-s) var(--radius-s) 0 0;
+}
+.code__head + .code{ border-radius:0 0 var(--radius-s) var(--radius-s); }
+.code .c-key{ color:var(--violet); }
+.code .c-str{ color:var(--green); }
+.code .c-num{ color:var(--amber); }
+.code .c-com{ color:var(--ink-mute); font-style:italic; }
+.code .c-fn{ color:var(--cyan); }
+code:not(.code){
+  font-family:var(--mono); font-size:.88em;
+  background:rgba(120,140,180,.12); padding:.1em .4em; border-radius:5px; color:var(--ink);
+}
+
+/* ============================================================
+   CALLOUT
+   ============================================================ */
+.callout{
+  border-left:3px solid var(--accent);
+  background:linear-gradient(90deg, rgba(70,230,208,.08), transparent 70%);
+  border-radius:0 var(--radius-s) var(--radius-s) 0;
+  padding:.9rem 1.1rem; color:var(--ink-dim);
+}
+.callout strong{ color:var(--ink); }
+.callout--warn{ border-left-color:var(--amber); background:linear-gradient(90deg, rgba(255,199,100,.09), transparent 70%); }
+.callout--info{ border-left-color:var(--violet); background:linear-gradient(90deg, rgba(139,123,255,.09), transparent 70%); }
+.callout--danger{ border-left-color:var(--red); background:linear-gradient(90deg, rgba(255,111,111,.09), transparent 70%); }
+
+/* ============================================================
+   TABLE  (wrap in .table-wrap for overflow-x)
+   ============================================================ */
+.table-wrap{ overflow-x:auto; border-radius:var(--radius-s); border:1px solid var(--line); }
+table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520px; }
+.tbl th,.tbl td{ text-align:left; padding:.7rem .95rem; border-bottom:1px solid var(--line-soft); }
+.tbl th{
+  font-family:var(--mono); font-size:.72rem; letter-spacing:.08em; text-transform:uppercase;
+  color:var(--ink-mute); background:var(--panel); position:sticky; top:0;
+}
+.tbl tr:last-child td{ border-bottom:none; }
+.tbl td{ color:var(--ink-dim); }
+.tbl tbody tr:hover{ background:rgba(120,140,180,.05); }
+.tbl .mono{ color:var(--ink); }
+
+/* ============================================================
+   PIPELINE / FLOW DIAGRAM
+   .flow holds .node + .arrow; wrap in .table-wrap if wide
+   ============================================================ */
+.flow{ display:flex; align-items:stretch; gap:.4rem; flex-wrap:wrap; }
+.node{
+  flex:1 1 0; min-width:130px;
+  background:linear-gradient(180deg,var(--panel-2),var(--panel));
+  border:1px solid var(--line); border-radius:var(--radius-s);
+  padding:1rem 1.1rem; text-align:center;
+}
+.node--accent{ border-color:rgba(70,230,208,.4); box-shadow:inset 0 0 24px rgba(70,230,208,.06); }
+.node__name{ font-weight:650; color:var(--ink); font-size:.98rem; }
+.node__sub{ font-family:var(--mono); font-size:.72rem; color:var(--ink-mute); margin-top:.25rem; }
+.arrow{ align-self:center; color:var(--accent); font-family:var(--mono); font-size:1.2rem; padding:0 .1rem; }
+
+/* ============================================================
+   REFERENCE / FOOTNOTE
+   ============================================================ */
+.ref{ font-family:var(--mono); font-size:.74rem; color:var(--ink-mute); letter-spacing:.02em; }
+.ref a{ color:var(--ink-dim); border:none; }
+.divider{ height:1px; background:var(--line); border:none; margin:1.2rem 0; }
+
+/* ============================================================
+   SLIDE FURNITURE — page number, progress, footer brand
+   ============================================================ */
+.deck-progress{
+  position:fixed; top:0; left:0; height:2px; width:0%;
+  background:linear-gradient(90deg,var(--cyan),var(--violet));
+  box-shadow:0 0 8px rgba(70,230,208,.6);
+  z-index:50; transition:width .15s linear;
+}
+.slide__no{
+  position:absolute; bottom:1.3rem; right:var(--pad);
+  font-family:var(--mono); font-size:.74rem; color:var(--ink-mute);
+  letter-spacing:.08em; z-index:2;
+}
+.slide__brand{
+  position:absolute; bottom:1.3rem; left:var(--pad);
+  font-family:var(--mono); font-size:.74rem; color:var(--ink-mute);
+  letter-spacing:.1em; z-index:2;
+}
+
+/* ============================================================
+   ENTRANCE ANIMATIONS  (.anim -> .in via IntersectionObserver)
+   Apply .anim to elements; optional --d delay via data-d / inline style
+   ============================================================ */
+@media (prefers-reduced-motion:no-preference){
+  .slide .anim{
+    opacity:0; transform:translateY(18px);
+    transition:opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+    transition-delay:var(--d,0ms);
+  }
+  .slide.in .anim{ opacity:1; transform:none; }
+  .anim--left{ transform:translateX(-22px); }
+  .anim--right{ transform:translateX(22px); }
+  .anim--scale{ transform:scale(.96); }
+  .slide.in .anim--left,
+  .slide.in .anim--right,
+  .slide.in .anim--scale{ transform:none; }
+}
+
+</style>
+<main class="deck">
+<section class="slide slide--cover slide--center">
+  <div class="slide__inner">
+    <div class="kicker anim">R&amp;D / PRE-ALPHA</div>
+
+    <h1 class="cover__title anim" style="--d:80ms">gaussian-robot</h1>
+
+    <p class="lead anim" style="--d:160ms">
+      Un agente <span class="hl">VLM</span> naviga <em>dentro</em> uno splat
+      <span class="hl-w">3DGS</span> e propone <span class="hl-2">nuove pose camera</span>
+      nelle regioni sotto-campionate per <strong>densificare</strong> la ricostruzione.
+    </p>
+
+    <div class="row anim" style="--d:240ms">
+      <span class="pill pill--cyan">Goal 1 &mdash; Miglioramento 3DGS</span>
+      <span class="pill pill--amber">Goal 2 &mdash; Fine-tuning modello robotico</span>
+    </div>
+
+    <div class="divider anim" style="--d:300ms"></div>
+
+    <div class="cover__meta anim" style="--d:360ms">
+      <span><span class="dot"></span> R&amp;D / PRE-ALPHA</span>
+      <span class="muted">&middot;</span>
+      <span>2026-06-23</span>
+      <span class="muted">&middot;</span>
+      <span>Qwen via vLLM &middot; renderer gsplat &middot; single-GPU</span>
+    </div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">01 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">01 / COS&#8217;E&#768;</span>
+    <h2 class="slide__title">Un agente VLM che <span class="hl">esplora dentro lo splat</span></h2>
+    <p class="slide__subtitle">Un agente naviga <em>dentro</em> una scena 3D Gaussian Splat per proporre nuove pose camera nelle regioni sotto-campionate. La pipeline e un <span class="hl-w">loop chiuso</span>, con architettura pluggable (nessun renderer o VLM pinnato).</p>
+
+    <div class="cols">
+      <div class="stack anim anim--left">
+        <ul class="list list--num">
+          <li><span class="hl-w">Render</span> della scena da una camera &#8594; <code>Observation</code> (RGB + depth colormap + mappa top-down body-fixed).</li>
+          <li><span class="hl-w">Navigator</span>: il VLM (Qwen3.5-9B via vLLM) legge l&#8217;osservazione ed emette <em>solo il verbo</em> egocentrico.</li>
+          <li><span class="hl-w">Action</span> applicata alla posa &#8594; update coverage &#8594; check <code>StopPolicies</code>.</li>
+          <li>Multi-seed dalle <span class="hl">capture pose</span> del training; union delle traiettorie.</li>
+        </ul>
+        <div class="row">
+          <span class="pill pill--cyan">single-GPU</span>
+          <span class="pill pill--green">training-free</span>
+          <span class="pill pill--ghost">pluggable</span>
+        </div>
+      </div>
+
+      <div class="anim anim--right" style="--d:120ms">
+        <div class="table-wrap">
+          <svg viewBox="0 0 760 300" width="100%" role="img" aria-label="Pipeline a loop chiuso: Robot, Navigator (VLM), Renderer da splat, VLM, Action">
+            <defs>
+              <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="#56c2e6"/>
+              </marker>
+              <linearGradient id="boxg" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#1b2433"/>
+                <stop offset="1" stop-color="#141a25"/>
+              </linearGradient>
+            </defs>
+
+            <!-- ROBOT -->
+            <rect x="20" y="40" width="130" height="64" rx="10" fill="url(#boxg)" stroke="#3a4760" stroke-width="1.5"/>
+            <text x="85" y="68" text-anchor="middle" fill="#e8edf5" font-size="16" font-family="monospace" font-weight="700">Robot</text>
+            <text x="85" y="88" text-anchor="middle" fill="#8a98ad" font-size="11" font-family="monospace">pose / seed</text>
+
+            <!-- RENDERER -->
+            <rect x="300" y="40" width="160" height="64" rx="10" fill="url(#boxg)" stroke="#56c2e6" stroke-width="1.8"/>
+            <text x="380" y="68" text-anchor="middle" fill="#e8edf5" font-size="16" font-family="monospace" font-weight="700">Renderer</text>
+            <text x="380" y="88" text-anchor="middle" fill="#56c2e6" font-size="11" font-family="monospace">da splat (gsplat)</text>
+
+            <!-- OBSERVATION / VLM -->
+            <rect x="610" y="40" width="130" height="64" rx="10" fill="url(#boxg)" stroke="#3a4760" stroke-width="1.5"/>
+            <text x="675" y="68" text-anchor="middle" fill="#e8edf5" font-size="16" font-family="monospace" font-weight="700">VLM</text>
+            <text x="675" y="88" text-anchor="middle" fill="#8a98ad" font-size="11" font-family="monospace">Qwen / vLLM</text>
+
+            <!-- ACTION -->
+            <rect x="300" y="196" width="160" height="64" rx="10" fill="url(#boxg)" stroke="#a98bff" stroke-width="1.8"/>
+            <text x="380" y="224" text-anchor="middle" fill="#e8edf5" font-size="16" font-family="monospace" font-weight="700">Action</text>
+            <text x="380" y="244" text-anchor="middle" fill="#a98bff" font-size="11" font-family="monospace">verbo egocentrico</text>
+
+            <!-- Robot -> Renderer -->
+            <line x1="150" y1="72" x2="296" y2="72" stroke="#56c2e6" stroke-width="2" marker-end="url(#ah)"/>
+            <text x="222" y="60" text-anchor="middle" fill="#8a98ad" font-size="10.5" font-family="monospace">camera</text>
+
+            <!-- Renderer -> VLM -->
+            <line x1="460" y1="72" x2="606" y2="72" stroke="#56c2e6" stroke-width="2" marker-end="url(#ah)"/>
+            <text x="533" y="60" text-anchor="middle" fill="#8a98ad" font-size="10.5" font-family="monospace">Observation</text>
+
+            <!-- VLM -> Action (down + left) -->
+            <path d="M675,104 L675,228 L464,228" fill="none" stroke="#a98bff" stroke-width="2" marker-end="url(#ah)"/>
+            <text x="580" y="222" text-anchor="middle" fill="#8a98ad" font-size="10.5" font-family="monospace">verbo</text>
+
+            <!-- Action -> Robot (left + up): loop chiuso -->
+            <path d="M296,228 L85,228 L85,108" fill="none" stroke="#56c2e6" stroke-width="2" marker-end="url(#ah)"/>
+            <text x="160" y="222" text-anchor="middle" fill="#8a98ad" font-size="10.5" font-family="monospace">apply_action &#8594; coverage</text>
+
+            <text x="380" y="150" text-anchor="middle" fill="#56c2e6" font-size="11" font-family="monospace" opacity="0.85">&#8635; loop chiuso (StopPolicies)</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout anim" style="--d:240ms"><span class="hl-w">Deliverable:</span> un <span class="hl">set di nuove pose</span> in regioni sotto-campionate &#8594; rese in viste novel (modello generativo) e usate per <strong>densificare lo splat</strong>, per un rendering plausibile e privo di artefatti.</div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">02 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">02 / ARCHITETTURA</span>
+    <h2 class="slide__title">Stato: architettura <span class="hl">pluggable</span>, pre-alpha</h2>
+    <p class="slide__subtitle">Dieci moduli disaccoppiati attorno a <code>session.py</code>. I due punti caldi &mdash; <strong>renderer</strong> e <strong>VLM</strong> &mdash; vivono <em>dietro protocolli</em>, non sono pinnati all'implementazione.</p>
+
+    <div class="row anim" style="--d:60ms">
+      <span class="pill pill--amber"><span class="dot dot--amber"></span> pre-alpha</span>
+      <span class="pill pill--cyan">ADR 0001&ndash;0009 accepted</span>
+      <span class="pill pill--green">single-GPU</span>
+      <span class="pill pill--ghost">no early-binding</span>
+    </div>
+
+    <div class="callout callout--info anim" style="--d:120ms">
+      <code>Renderer</code> e <code>VLMClient</code> sono <span class="hl-w">@runtime_checkable Protocol</span>: <span class="hl">gsplat</span> e <span class="hl-2">Qwen via vLLM</span> sono solo l'implementazione corrente, sostituibili senza toccare l'orchestrazione.
+    </div>
+
+    <div class="grid-4">
+      <div class="card anim" style="--d:160ms">
+        <div class="card__title">splat/</div>
+        <div class="card__body">Loading scena <code>.ply/.splat</code> + <code>capture_poses</code> (seed ground-truth).</div>
+      </div>
+      <div class="card card--accent anim" style="--d:200ms">
+        <div class="card__title">render/ <span class="pill pill--cyan">protocol</span></div>
+        <div class="card__body"><code>Renderer</code> Protocol + camera/pose. Nessuna implementazione pinnata.</div>
+      </div>
+      <div class="card anim" style="--d:240ms">
+        <div class="card__title">backends/</div>
+        <div class="card__body"><span class="hl">gsplat_renderer</span>, ply_point, demo dietro l'interfaccia render.</div>
+      </div>
+      <div class="card anim" style="--d:280ms">
+        <div class="card__title">nav/</div>
+        <div class="card__body">robot, explorer, action, observation, stop &mdash; il loop egocentrico.</div>
+      </div>
+
+      <div class="card anim" style="--d:320ms">
+        <div class="card__title">metrics/</div>
+        <div class="card__body"><code>coverage.py</code>: floor coverage% + novelty (Tier-1/2).</div>
+      </div>
+      <div class="card anim" style="--d:360ms">
+        <div class="card__title">filters/</div>
+        <div class="card__body"><code>pose_filters.py</code>: quality-drop &rarr; novelty-dedup &rarr; budget cap.</div>
+      </div>
+      <div class="card anim" style="--d:400ms">
+        <div class="card__title">depth/</div>
+        <div class="card__body"><code>estimator.py</code>: depth per la colormap dell'Observation.</div>
+      </div>
+      <div class="card card--accent anim" style="--d:440ms">
+        <div class="card__title">vlm/ <span class="pill pill--cyan">protocol</span></div>
+        <div class="card__body"><code>VLMClient</code> Protocol; client/<span class="hl-2">qwen</span>/server, API OpenAI-compat.</div>
+      </div>
+
+      <div class="card anim" style="--d:480ms">
+        <div class="card__title">ui/</div>
+        <div class="card__body">dashboard di ispezione: traiettorie, coverage, viste rese.</div>
+      </div>
+      <div class="card anim" style="--d:520ms">
+        <div class="card__title">session.py</div>
+        <div class="card__body">Orchestrazione walk/sessione + seeding dalle capture pose.</div>
+      </div>
+    </div>
+
+    <div class="table-wrap anim" style="--d:560ms">
+      <div class="flow">
+        <div class="node"><div class="node__name">render(camera)</div><div class="node__sub">render/ &middot; backends/</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="node"><div class="node__name">Observation</div><div class="node__sub">rgb + depth + top-down</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="node node--accent"><div class="node__name">VLM</div><div class="node__sub">verbo egocentrico</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="node"><div class="node__name">apply_action</div><div class="node__sub">nav/ &middot; update coverage</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="node"><div class="node__name">StopPolicies</div><div class="node__sub">filters &rarr; nuove pose</div></div>
+      </div>
+    </div>
+
+    <p class="ref">src/gaussian_robot/ &middot; Renderer &amp; VLMClient = @runtime_checkable Protocol (render/base.py, vlm/client.py)</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">02 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">04 / STATO: DECISIONI</span>
+    <h2 class="slide__title anim">Cosa e gia <span class="hl">deciso e implementato</span></h2>
+    <p class="slide__subtitle anim" style="--d:80ms">Nove ADR <span class="hl-w">accepted</span> (0001-0009). Sintesi delle scelte che governano la pipeline <code>render &#8594; VLM &#8594; action &#8594; coverage</code>.</p>
+
+    <div class="table-wrap anim" style="--d:160ms">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>ADR</th>
+            <th>Decisione</th>
+            <th>Sintesi operativa</th>
+            <th>Stato</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">0001/02</td>
+            <td>Architettura pluggable</td>
+            <td>Renderer e VLM dietro <strong>protocolli</strong>, no early binding. Mondo <code>+Y up</code>, floor <code>XZ</code>; camera OpenCV (<code>+Z fwd</code>).</td>
+            <td><span class="pill pill--green">accepted</span></td>
+          </tr>
+          <tr>
+            <td class="mono">0003</td>
+            <td>Controllo locale + multi-seed</td>
+            <td>Controller incrementale: <strong>1 azione discreta/step</strong> + restart multi-seed da capture pose. Waypoint globali e frontier-teleport <span class="hl-2">differiti</span>.</td>
+            <td><span class="pill pill--green">accepted</span></td>
+          </tr>
+          <tr>
+            <td class="mono">0004</td>
+            <td>Action set egocentrico</td>
+            <td>7 verbi: <code>forward/back/turn/look/stop</code>. Magnitudini <strong>system-owned</strong>: step = <span class="hl">0.03 &times; diag AABB</span>, rot/pitch = <span class="hl">30&deg;</span>. Il VLM emette <em>solo il verbo</em>.</td>
+            <td><span class="pill pill--green">accepted</span></td>
+          </tr>
+          <tr>
+            <td class="mono">0005</td>
+            <td>Observation 3 pannelli</td>
+            <td><strong>RGB + depth colormap + top-down body-fixed</strong> (pose, trail, freccia) + prompt fisso + 1 riga di stato.</td>
+            <td><span class="pill pill--green">accepted</span></td>
+          </tr>
+          <tr>
+            <td class="mono">0006</td>
+            <td>Terminazione StopPolicy</td>
+            <td>OR-composte, 2 livelli. Per-walk: budget N=40, <span class="hl">coverage plateau primario</span>, bounds/render degenere. <strong>Stop del VLM demoto</strong> a voto del plateau.</td>
+            <td><span class="pill pill--green">accepted</span></td>
+          </tr>
+          <tr>
+            <td class="mono">0007</td>
+            <td>Metrica = Goal A</td>
+            <td><strong>Plausibilita, non verita</strong> geometrica. Tier1 (coverage% + novelty) attivo; Tier3 ray/gaussian later, <span class="hl-2">Tier4 retrain differito</span>.</td>
+            <td><span class="pill pill--green">accepted</span></td>
+          </tr>
+          <tr>
+            <td class="mono">0008</td>
+            <td>Filtri deliverable</td>
+            <td><code>quality drop &#8594; novelty dedup (farthest-point, r_keep) &#8594; budget cap P</code>. <strong>Position-only</strong> per v1.</td>
+            <td><span class="pill pill--green">accepted</span></td>
+          </tr>
+          <tr>
+            <td class="mono">0009</td>
+            <td>Seeding da capture pose</td>
+            <td>Le capture pose del training sono <strong>ground truth</strong> di "dove una camera puo stare e vedere geometria reale", invece di indovinare da density grid.</td>
+            <td><span class="pill pill--green">accepted</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="ref anim" style="--d:240ms">ADR 0001-0009 &middot; tutte accepted &middot; src/gaussian_robot/{nav,filters,metrics,splat,session.py}</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">04 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">04 / STATO: DECISIONI</span>
+    <h2 class="slide__title anim">Le scelte che <span class="hl">vincolano il loop</span></h2>
+    <p class="slide__subtitle anim" style="--d:80ms">Tre decisioni strutturali con il loro razionale di design.</p>
+
+    <div class="cols">
+      <div class="stack">
+        <div class="card card--accent anim" style="--d:120ms">
+          <div class="card__num">0004</div>
+          <div class="card__title">Magnitudini system-owned</div>
+          <div class="card__body">Il VLM sceglie <strong>solo il verbo</strong>; il sistema possiede le grandezze. Traslazione sul piano floor, pitch <em>solo view</em>. Mappa naturalmente sulla tokenizzazione azione-come-testo (futuro VLA, Goal 2).</div>
+        </div>
+        <div class="card anim" style="--d:200ms">
+          <div class="card__num">0006</div>
+          <div class="card__title">Plateau primario, VLM demoto</div>
+          <div class="card__body">Il criterio oggettivo (<span class="hl">coverage plateau</span>) chiude il walk. Lo <code>stop</code> del VLM e ridotto a un voto del contatore: <strong>non puo terminare un walk da solo</strong>. Anti-orbiting per costruzione.</div>
+        </div>
+        <div class="card anim" style="--d:280ms">
+          <div class="card__num">0007</div>
+          <div class="card__title">Goal A: plausibilita</div>
+          <div class="card__body">Si valuta che la vista <strong>sembri reale</strong>, non che sia geometricamente vera. Baseline di confronto: <em>farthest-point sampling</em> a budget pari.</div>
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="table-wrap anim anim--right" style="--d:160ms">
+          <div class="flow">
+            <div class="node node--accent">
+              <div class="node__name">seed</div>
+              <div class="node__sub">capture pose · 0009</div>
+            </div>
+            <span class="arrow">&#8594;</span>
+            <div class="node">
+              <div class="node__name">render</div>
+              <div class="node__sub">rgb+depth+top-down · 0005</div>
+            </div>
+            <span class="arrow">&#8594;</span>
+            <div class="node">
+              <div class="node__name">VLM</div>
+              <div class="node__sub">verbo · 0004</div>
+            </div>
+            <span class="arrow">&#8594;</span>
+            <div class="node">
+              <div class="node__name">apply</div>
+              <div class="node__sub">step/rot owned</div>
+            </div>
+            <span class="arrow">&#8594;</span>
+            <div class="node">
+              <div class="node__name">coverage</div>
+              <div class="node__sub">plateau · 0006</div>
+            </div>
+            <span class="arrow">&#8594;</span>
+            <div class="node node--accent">
+              <div class="node__name">filtri</div>
+              <div class="node__sub">dedup+cap · 0008</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="callout callout--info anim" style="--d:240ms">
+          <strong>Razionale 0003:</strong> controllo locale + restart multi-seed copre la scena <span class="hl-2">globalmente</span> senza planner di waypoint. Il glob viene dall'union delle traiettorie, non da una pianificazione esplicita.
+        </div>
+
+        <div class="row anim" style="--d:320ms">
+          <span class="pill pill--ghost">pluggable</span>
+          <span class="pill pill--ghost">single-GPU</span>
+          <span class="pill pill--ghost">training-free</span>
+          <span class="pill pill--cyan">position-only v1</span>
+        </div>
+      </div>
+    </div>
+
+    <p class="ref anim" style="--d:360ms">Decisioni gia implementate &middot; estensioni (FisherRF/anchor/VLA) trattate nelle sezioni Goal 1 e Goal 2</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">05 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">GOAL 1 / IL PROBLEMA</span>
+    <h2 class="slide__title anim">Scegliamo <span class="hl">dove guardare</span> con euristiche proxy</h2>
+    <p class="slide__subtitle anim" style="--d:80ms">Oggi nessun segnale di incertezza vive <em>sullo</em> splat: misuriamo surrogati geometrici, non &laquo;dove la ricostruzione &egrave; debole&raquo;.</p>
+
+    <div class="cols" style="margin-top:1.2rem">
+      <div class="stack">
+        <div class="callout callout--warn anim" style="--d:120ms">
+          Le regioni da migliorare sono <span class="hl-w">sotto-osservate</span> e prive di <span class="hl-w">ground-truth</span>: non sappiamo misurare la loro qualit&agrave;, solo intuirla.
+        </div>
+
+        <div class="card anim" style="--d:200ms">
+          <div class="card__title">Proxy #1 &mdash; novelty farthest-point</div>
+          <div class="card__body">
+            Seeding e dedup guidati da <code>farthest_point_select</code> sul piano floor.
+            <span class="muted">Massimizza la <em>distanza spaziale</em> tra pose, non l'informazione mancante.</span>
+          </div>
+        </div>
+
+        <div class="card anim" style="--d:280ms">
+          <div class="card__title">Proxy #2 &mdash; <code>med_depth &times; alpha</code></div>
+          <div class="card__body">
+            Score di origine/seed in <code>_best_origin</code> / <code>_select_seeds</code>:
+            <code>score = med &times; alpha_mean</code>.
+            <span class="muted">Conferma solo &laquo;c'&egrave; geometria visibile e ricostruita&raquo;, non &laquo;qui serve migliorare&raquo;.</span>
+          </div>
+        </div>
+
+        <ul class="list anim" style="--d:360ms">
+          <li>Proxy <span class="hl">scollegati dall'obiettivo</span>: ottimizzano copertura/visibilit&agrave;, non riduzione d'incertezza.</li>
+          <li>Conseguenza nota: <span class="mono">orbiting</span> e seeding cieco, gi&agrave; arginati da StuckGuard / CoveragePlateau.</li>
+        </ul>
+      </div>
+
+      <div class="stack">
+        <div class="table-wrap anim" style="--d:160ms">
+          <svg viewBox="0 0 460 300" width="100%" role="img" aria-label="Diagramma: proxy attuali vs loop target NBV">
+            <defs>
+              <linearGradient id="g1p" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#22d3ee"/>
+                <stop offset="1" stop-color="#a78bfa"/>
+              </linearGradient>
+              <marker id="ar1" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 Z" fill="#a78bfa"/>
+              </marker>
+              <marker id="ar2" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+                <path d="M0,0 L9,4.5 L0,9 Z" fill="#22d3ee"/>
+              </marker>
+            </defs>
+
+            <!-- splat with under-observed hole -->
+            <text x="20" y="26" fill="#94a3b8" font-family="ui-monospace,monospace" font-size="12">SPLAT 3DGS</text>
+            <g>
+              <circle cx="70"  cy="80" r="6" fill="#22d3ee" opacity="0.85"/>
+              <circle cx="100" cy="64" r="7" fill="#22d3ee" opacity="0.8"/>
+              <circle cx="130" cy="92" r="6" fill="#22d3ee" opacity="0.85"/>
+              <circle cx="92"  cy="104" r="8" fill="#22d3ee" opacity="0.75"/>
+              <circle cx="150" cy="70" r="5" fill="#22d3ee" opacity="0.8"/>
+              <!-- under-observed region -->
+              <circle cx="250" cy="86" r="46" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="6 5" opacity="0.9"/>
+              <circle cx="238" cy="78" r="3" fill="#f59e0b" opacity="0.5"/>
+              <circle cx="266" cy="96" r="2.5" fill="#f59e0b" opacity="0.45"/>
+              <text x="250" y="150" text-anchor="middle" fill="#f59e0b" font-family="ui-monospace,monospace" font-size="11">regione sotto-osservata</text>
+              <text x="250" y="166" text-anchor="middle" fill="#64748b" font-family="ui-monospace,monospace" font-size="10">no ground-truth</text>
+            </g>
+
+            <!-- divider -->
+            <line x1="20" y1="192" x2="440" y2="192" stroke="#334155" stroke-width="1"/>
+            <text x="20" y="214" fill="#a78bfa" font-family="ui-monospace,monospace" font-size="12">LOOP TARGET</text>
+
+            <!-- target loop boxes -->
+            <rect x="20"  y="228" width="110" height="44" rx="8" fill="none" stroke="url(#g1p)" stroke-width="2"/>
+            <text x="75" y="250" text-anchor="middle" fill="#e2e8f0" font-family="ui-monospace,monospace" font-size="12">NBV</text>
+            <text x="75" y="265" text-anchor="middle" fill="#64748b" font-family="ui-monospace,monospace" font-size="9">next-best-view</text>
+
+            <rect x="175" y="228" width="110" height="44" rx="8" fill="none" stroke="url(#g1p)" stroke-width="2"/>
+            <text x="230" y="250" text-anchor="middle" fill="#e2e8f0" font-family="ui-monospace,monospace" font-size="12">genera vista</text>
+            <text x="230" y="265" text-anchor="middle" fill="#64748b" font-family="ui-monospace,monospace" font-size="9">diffusion</text>
+
+            <rect x="330" y="228" width="110" height="44" rx="8" fill="none" stroke="url(#g1p)" stroke-width="2"/>
+            <text x="385" y="250" text-anchor="middle" fill="#e2e8f0" font-family="ui-monospace,monospace" font-size="12">densify</text>
+            <text x="385" y="265" text-anchor="middle" fill="#64748b" font-family="ui-monospace,monospace" font-size="9">3DGS</text>
+
+            <line x1="130" y1="250" x2="173" y2="250" stroke="#a78bfa" stroke-width="2" marker-end="url(#ar1)"/>
+            <line x1="285" y1="250" x2="328" y2="250" stroke="#a78bfa" stroke-width="2" marker-end="url(#ar1)"/>
+            <!-- feedback arrow densify -> NBV -->
+            <path d="M385,272 C385,294 75,294 75,274" fill="none" stroke="#22d3ee" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#ar2)"/>
+          </svg>
+        </div>
+
+        <div class="callout callout--info anim" style="--d:320ms">
+          <span class="hl-w">La tensione:</span> per chiudere il loop NBV &rarr; genera &rarr; densify serve un <span class="hl-2">segnale di incertezza calcolato sullo splat</span> &mdash; non un proxy. Le prossime slide propongono come ottenerlo.
+        </div>
+      </div>
+    </div>
+
+    <div class="ref anim" style="--d:420ms">src/gaussian_robot/session.py &mdash; _best_origin, _select_seeds (score = med &times; alpha_mean) &middot; filters/pose_filters.py &mdash; farthest_point_select</div>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">04 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">GOAL 1 / LEVA P0</span>
+    <h2 class="slide__title">NBV guidato dall'<span class="hl">incertezza</span>, calcolata <span class="hl-w">sullo splat</span></h2>
+    <p class="slide__subtitle">Smettere di indovinare la prossima vista con euristiche proxy: misurare <em>dove la ricostruzione &egrave; debole</em> direttamente sul 3DGS e seedare l&igrave;.</p>
+
+    <div class="cols">
+      <div class="stack">
+        <div class="callout callout--warn anim" style="--d:0ms">
+          <strong>Oggi (proxy):</strong> seeding e selezione pose usano euristiche geometriche &mdash; farthest-point sul <em>novelty</em> e <code>med_depth &times; alpha</code> in <code>_select_seeds/_best_origin</code>. Non sanno <em>dove il modello sbaglia</em>, solo dove non sono ancora stato.
+        </div>
+        <div class="callout anim" style="--d:120ms">
+          <strong>P0 (on-objective):</strong> calcola l'<span class="hl">information-gain</span> sullo splat. La domanda diventa: <em>&laquo;quale vista, se osservata, farebbe cambiare di pi&ugrave; il modello?&raquo;</em> &mdash; ed &egrave; esattamente l'obiettivo NBV per ricostruzione.
+        </div>
+        <ul class="list list--check">
+          <li><strong>generate_seeds</strong> (<code>session.py</code>): seeda verso le zone incerte</li>
+          <li><strong>observation</strong> (<code>nav/observation.py</code>): mappa &laquo;dove la ricostruzione &egrave; debole&raquo; nel prompt</li>
+          <li><strong>pose_filters.py</strong>: pesa la selezione finale per information-gain, non solo novelty/budget</li>
+          <li><strong>stop.py</strong>: fermati quando l'incertezza residua non cala pi&ugrave;</li>
+        </ul>
+      </div>
+
+      <div class="stack anim anim--right" style="--d:160ms">
+        <div class="table-wrap">
+          <svg viewBox="0 0 460 300" width="100%" role="img" aria-label="Loop NBV su incertezza dello splat">
+            <defs>
+              <linearGradient id="g-unc" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#7c5cff" stop-opacity="0.9"/>
+                <stop offset="1" stop-color="#22d3ee" stop-opacity="0.9"/>
+              </linearGradient>
+              <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0 0 L10 5 L0 10 z" fill="#22d3ee"/>
+              </marker>
+            </defs>
+            <!-- splat box -->
+            <rect x="20" y="30" width="180" height="120" rx="10" fill="#0e1626" stroke="#243049"/>
+            <text x="110" y="22" fill="#9fb0c8" font-size="12" font-family="monospace" text-anchor="middle">3DGS (splat)</text>
+            <!-- gaussian blobs, some uncertain -->
+            <ellipse cx="60" cy="70" rx="16" ry="10" fill="#2a3b5e"/>
+            <ellipse cx="100" cy="95" rx="20" ry="12" fill="#2a3b5e"/>
+            <ellipse cx="150" cy="65" rx="14" ry="9" fill="#2a3b5e"/>
+            <ellipse cx="160" cy="115" rx="22" ry="13" fill="url(#g-unc)" opacity="0.85"/>
+            <ellipse cx="70" cy="120" rx="18" ry="11" fill="url(#g-unc)" opacity="0.7"/>
+            <text x="160" y="119" fill="#0a0f1a" font-size="9" font-family="monospace" text-anchor="middle">?</text>
+            <text x="70" y="124" fill="#0a0f1a" font-size="9" font-family="monospace" text-anchor="middle">?</text>
+
+            <!-- uncertainty field -->
+            <rect x="260" y="30" width="180" height="120" rx="10" fill="#0e1626" stroke="#3a2a5e"/>
+            <text x="350" y="22" fill="#b9a6ff" font-size="12" font-family="monospace" text-anchor="middle">campo incertezza</text>
+            <rect x="272" y="42" width="36" height="36" rx="4" fill="#1a2236"/>
+            <rect x="312" y="42" width="36" height="36" rx="4" fill="#241a3e"/>
+            <rect x="352" y="42" width="36" height="36" rx="4" fill="#3a2470"/>
+            <rect x="392" y="42" width="36" height="36" rx="4" fill="#6b3fd6"/>
+            <rect x="272" y="82" width="36" height="36" rx="4" fill="#241a3e"/>
+            <rect x="312" y="82" width="36" height="36" rx="4" fill="#3a2470"/>
+            <rect x="352" y="82" width="36" height="36" rx="4" fill="#7c5cff"/>
+            <rect x="392" y="82" width="36" height="36" rx="4" fill="#22d3ee"/>
+            <text x="410" y="105" fill="#0a0f1a" font-size="11" font-family="monospace" text-anchor="middle">&#9733;</text>
+
+            <!-- arrows -->
+            <path d="M205 90 L255 90" stroke="#22d3ee" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+            <text x="230" y="82" fill="#7c8aa6" font-size="9" font-family="monospace" text-anchor="middle">FI / MI</text>
+
+            <!-- bottom: NBV pose -->
+            <rect x="140" y="210" width="180" height="60" rx="10" fill="#0e1626" stroke="#243049"/>
+            <text x="230" y="235" fill="#e6edf6" font-size="12" font-family="monospace" text-anchor="middle">NBV &rarr; seed pose</text>
+            <text x="230" y="253" fill="#7c8aa6" font-size="10" font-family="monospace" text-anchor="middle">argmax info-gain</text>
+
+            <path d="M410 152 C410 200, 320 210, 322 208" stroke="#22d3ee" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+            <path d="M138 240 C40 240, 40 160, 60 152" stroke="#7c5cff" stroke-width="2" fill="none" marker-end="url(#ar)"/>
+            <text x="92" y="200" fill="#7c8aa6" font-size="9" font-family="monospace" text-anchor="middle">densify</text>
+          </svg>
+        </div>
+        <p class="ref">Loop chiuso: incertezza sullo splat &rarr; NBV &rarr; vista novel (diffusion) &rarr; densificazione &rarr; incertezza scende.</p>
+      </div>
+    </div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">04 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">GOAL 1 / P0 &mdash; DUE SEGNALI</span>
+    <h2 class="slide__title">Due modi di misurare l'incertezza: <span class="hl">FisherRF</span> vs <span class="hl-2">GauSS-MI</span></h2>
+    <p class="slide__subtitle">Stessa intuizione (&laquo;quale vista informa di pi&ugrave;&raquo;), due formalismi. Entrambi <strong>training-free / inference-time</strong>, compatibili con gsplat single-GPU.</p>
+
+    <div class="grid-2">
+      <div class="card card--accent anim" style="--d:0ms">
+        <div class="card__title"><span class="dot"></span> FisherRF &mdash; Fisher Information</div>
+        <div class="card__body">
+          <p><span class="hl-w">Intuizione:</span> &laquo;quale vista, se la osservassi, farebbe <em>cambiare di pi&ugrave;</em> i parametri del modello?&raquo; Pi&ugrave; un parametro &egrave; mal vincolato dai dati, pi&ugrave; una nuova vista che lo tocca &egrave; informativa.</p>
+          <p><span class="hl-w">Tecnico:</span> approssima l'<em>information gain</em> con la <strong>Fisher Information</strong> (Hessiana della log-likelihood). Seleziona la vista che massimizza la riduzione di incertezza attesa sui parametri.</p>
+          <div class="row">
+            <span class="pill pill--cyan">~70 fps su 3DGS</span>
+            <span class="pill pill--green">training-free</span>
+            <span class="pill pill--ghost">ECCV 2024</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:120ms">
+        <div class="card__title"><span class="dot dot--amber"></span> GauSS-MI &mdash; Mutual Information</div>
+        <div class="card__body">
+          <p><span class="hl-w">Intuizione:</span> quanta <em>informazione condivisa</em> c'&egrave; tra una nuova osservazione e lo stato corrente dello splat. Alta MI = la vista &laquo;dice molto&raquo; di ci&ograve; che ancora non sai.</p>
+          <p><span class="hl-w">Tecnico:</span> Shannon <strong>Mutual Information</strong> per la ricostruzione 3D attiva, con incertezza stimata <span class="hl-2">per-Gaussiana</span> &mdash; granularit&agrave; pi&ugrave; fine, mappabile direttamente sulle primitive da densificare.</p>
+          <div class="row">
+            <span class="pill">per-Gaussiana</span>
+            <span class="pill pill--green">active recon</span>
+            <span class="pill pill--ghost">RSS 2025</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="table-wrap anim" style="--d:200ms">
+      <table class="tbl">
+        <thead>
+          <tr><th>Aspetto</th><th>FisherRF</th><th>GauSS-MI</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Segnale</td><td>Fisher Information (Hessiana log-likelihood)</td><td>Shannon Mutual Information</td></tr>
+          <tr><td>Granularit&agrave;</td><td>parametri / vista</td><td><span class="hl-2">per-Gaussiana</span></td></tr>
+          <tr><td>Costo</td><td><span class="hl">~70 fps</span> su 3DGS</td><td>maggiore, ma pi&ugrave; locale</td></tr>
+          <tr><td>Uso in pipeline</td><td>score di vista per NBV/seeding</td><td>mappa incertezza &rarr; densify mirata</td></tr>
+          <tr><td>Training</td><td>nessuno (inference-time)</td><td>nessuno (inference-time)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout callout--info anim" style="--d:280ms">
+      <strong>Caveat di integrazione:</strong> i <em>70 fps</em> di FisherRF sono riportati <em>senza nominare la GPU</em>; agganciare FI/MI al loop gsplat single-GPU non &egrave; banale. Percorso: <span class="hl">spike P0</span> su FisherRF (pi&ugrave; economico, &egrave; l'unica cosa davvero <em>on-objective</em>) e tenerlo come sorgente della mappa di incertezza che alimenta anche P2/P3 e l'instruction-following futuro (&laquo;zone sfocate&raquo; = alta incertezza).
+    </div>
+
+    <p class="ref">Fonti: FisherRF (ECCV 2024) arXiv:2311.17874 &middot; GauSS-MI (RSS 2025) arXiv:2504.21067 &middot; research note &laquo;sintesi VLN&raquo;.</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">05 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">GOAL 1 / RENDERING 3DGS</span>
+    <h2 class="slide__title">Metodi <span class="hl">anchor-based</span> per 3D Gaussian Splatting</h2>
+    <p class="slide__subtitle">Gaussiane neurali derivate da feature ancorate, non primitive libere: piu compatte, view-adaptive, con densificazione guidata dalla geometria.</p>
+
+    <div class="cols">
+      <div class="stack">
+        <div class="callout callout--info anim anim--left" style="--d:0ms">
+          <strong>Idea.</strong> Niente milioni di Gaussiane esplicite. La scena vive in pochi <span class="hl-2">anchor strutturati</span>: ogni anchor porta una <em>feature apprendibile</em> e genera al volo <code>k</code> Gaussiane neurali i cui attributi (opacita, colore, scala, rotazione) sono decodificati da piccole MLP, condizionate su <span class="hl">direzione e distanza di vista</span>.
+        </div>
+        <ul class="list list--check">
+          <li class="anim" style="--d:80ms"><span class="hl-w">Compattezza</span> — pochi anchor + MLP al posto di Gaussiane ridondanti; modelli molto piu leggeri a parita (o miglioramento) di qualita.</li>
+          <li class="anim" style="--d:160ms"><span class="hl-w">View-adaptive</span> — la dipendenza da vista delle MLP regge forti cambi di punto di vista e zone texture-less, dove il 3DGS classico produce <em>floater</em> e <em>popping</em>.</li>
+          <li class="anim" style="--d:240ms"><span class="hl-w">Densificazione guidata</span> — anchor growing/pruning <em>error-based</em> su voxel multi-risoluzione, non euristica clone/split a gradiente.</li>
+        </ul>
+      </div>
+
+      <div class="stack anim anim--right" style="--d:120ms">
+        <div class="table-wrap">
+          <svg viewBox="0 0 460 300" width="100%" role="img" aria-label="Da anchor a Gaussiane neurali per-vista">
+            <defs>
+              <linearGradient id="ag" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0" stop-color="#22d3ee"/>
+                <stop offset="1" stop-color="#a78bfa"/>
+              </linearGradient>
+            </defs>
+            <!-- anchor grid -->
+            <text x="14" y="22" fill="#7dd3fc" font-family="monospace" font-size="12">anchor (voxel SfM)</text>
+            <g fill="url(#ag)">
+              <circle cx="40" cy="70" r="6"/><circle cx="90" cy="55" r="6"/><circle cx="60" cy="120" r="6"/>
+              <circle cx="110" cy="105" r="6"/><circle cx="45" cy="170" r="6"/><circle cx="100" cy="160" r="6"/>
+            </g>
+            <g stroke="#3b4252" stroke-width="1" opacity="0.6">
+              <line x1="40" y1="70" x2="90" y2="55"/><line x1="90" y1="55" x2="110" y2="105"/>
+              <line x1="60" y1="120" x2="110" y2="105"/><line x1="45" y1="170" x2="100" y2="160"/>
+              <line x1="60" y1="120" x2="45" y2="170"/>
+            </g>
+            <!-- feature + MLP -->
+            <g>
+              <rect x="170" y="95" width="110" height="58" rx="8" fill="#181a26" stroke="#a78bfa" stroke-width="1.5"/>
+              <text x="225" y="120" fill="#e5e7eb" font-family="monospace" font-size="11" text-anchor="middle">MLP</text>
+              <text x="225" y="138" fill="#94a3b8" font-family="monospace" font-size="9" text-anchor="middle">feat + dir/dist</text>
+            </g>
+            <text x="125" y="90" fill="#94a3b8" font-family="monospace" font-size="9">camera view</text>
+            <line x1="116" y1="105" x2="168" y2="118" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <!-- neural gaussians -->
+            <text x="320" y="40" fill="#7dd3fc" font-family="monospace" font-size="12">k Gaussiane</text>
+            <g fill="none" stroke="#a78bfa" stroke-width="1.6">
+              <ellipse cx="360" cy="80" rx="22" ry="11" transform="rotate(20 360 80)"/>
+              <ellipse cx="410" cy="120" rx="18" ry="9" transform="rotate(-25 410 120)"/>
+              <ellipse cx="350" cy="150" rx="20" ry="10" transform="rotate(10 350 150)"/>
+              <ellipse cx="405" cy="185" rx="16" ry="8" transform="rotate(40 405 185)"/>
+            </g>
+            <line x1="282" y1="124" x2="330" y2="120" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrow)"/>
+            <text x="300" y="250" fill="#94a3b8" font-family="monospace" font-size="9" text-anchor="middle">solo opacita &gt; soglia &#8594; rasterizza</text>
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+                <path d="M0,0 L6,3 L0,6 Z" fill="#22d3ee"/>
+              </marker>
+            </defs>
+          </svg>
+        </div>
+        <p class="muted mono" style="text-align:center">Capostipite: <span class="hl">Scaffold-GS</span> &#183; CVPR 2024 (Highlight)</p>
+      </div>
+    </div>
+
+    <p class="ref">Lu et al., <em>Scaffold-GS: Structured 3D Gaussians for View-Adaptive Rendering</em>, CVPR 2024 (Highlight) &#183; arXiv:2312.00109 &#183; city-super.github.io/scaffold-gs</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">04 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">GOAL 1 / FAMIGLIA ANCHOR-3DGS</span>
+    <h2 class="slide__title">Evoluzioni: <span class="hl">LOD</span>, <span class="hl-2">compressione</span> e perche aiuta la navigazione</h2>
+
+    <div class="grid-3">
+      <div class="card card--accent anim" style="--d:0ms">
+        <div class="card__title">Scaffold-GS <span class="pill pill--cyan">CVPR 2024</span></div>
+        <div class="card__body">Anchor da voxelizzazione SfM, k offset locali + MLP view-dependent. Densificazione <em>error-based</em> (growing/pruning). Loss: ricostruzione + SSIM + reg. di volume.</div>
+      </div>
+      <div class="card anim" style="--d:80ms">
+        <div class="card__title">Octree-GS <span class="pill">TPAMI/2024</span></div>
+        <div class="card__body">Octree sullo spazio: ogni livello = anchor a un <span class="hl">LOD</span> diverso. Selezione dinamica del LOD per distanza, training coarse-to-fine. Real-time consistente su scene grandi.</div>
+      </div>
+      <div class="card anim" style="--d:160ms">
+        <div class="card__title">HAC / HAC++ <span class="pill pill--amber">TPAMI 2025</span></div>
+        <div class="card__body">Compressione sopra Scaffold-GS: hash-grid binaria come contesto + entropy coding. HAC++ aggiunge contesto intra-anchor &#8594; <span class="hl-w">~100x</span> vs 3DGS.</div>
+      </div>
+    </div>
+
+    <div class="table-wrap" style="margin-top:18px">
+      <table class="tbl">
+        <thead>
+          <tr><th>Metodo</th><th>Contributo chiave</th><th>Leva per gaussian-robot</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">Scaffold-GS</td><td>Anchor + Gaussiane neurali view-adaptive; densif. guidata da copertura/errore</td><td>Paradigma di crescita controllata nelle zone ricostruite: meno floater/popping nelle viste novel</td></tr>
+          <tr><td class="mono">Octree-GS</td><td>Anchor LOD-structured, selezione per distanza osservatore</td><td>FPS real-time a distanze variabili durante la navigazione in scene grandi</td></tr>
+          <tr><td class="mono">HAC++</td><td>Entropy coding context-based, ~100x compressione</td><td>Compattezza per deploy on-device / streaming dello splat</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout callout--info anim" style="--d:240ms; margin-top:16px">
+      <strong>Perche aiuta il rendering per la navigazione.</strong> La densificazione anchor e <span class="hl-2">guidata da copertura/errore</span>, non dal solo gradiente: e il paradigma giusto per far crescere la rappresentazione in modo controllato dove serve. La robustezza <span class="hl">view-dependent</span> (texture-less, forti cambi di vista) e esattamente lo scenario di un robot che osserva da pose diverse da quelle di cattura &#8594; potrebbe sostituire/rafforzare l'attuale logica di <em>seeding da capture pose</em> e densificazione.
+    </div>
+
+    <p class="ref">Ren et al., <em>Octree-GS</em>, arXiv:2403.17898 &#183; Chen et al., <em>HAC++: Towards 100X Compression of 3DGS</em>, TPAMI 2025, arXiv:2501.12255 &#183; SOGS, CVPR 2025, arXiv:2503.07476</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">05 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">GOAL 1 / WORLD MODELS &amp; VIEW-GEN</span>
+    <h2 class="slide__title">Generare viste per <span class="hl">densificare lo splat</span></h2>
+    <p class="slide__subtitle">In alternativa o a fianco della diffusion novel-view: due world model che chiudono i buchi dello splat con viste geometricamente coerenti.</p>
+
+    <div class="cols">
+      <div class="stack anim anim--left">
+        <p class="lead">Il deliverable del bot sono <strong>pose in regioni sotto-campionate</strong>. Quelle pose vanno rese in viste novel e re-iniettate nello splat. La domanda: <span class="hl-w">cosa genera quelle viste?</span></p>
+        <ul class="list">
+          <li><strong>Diffusion novel-view</strong> &#8212; baseline attuale: una vista per posa, nessuna garanzia di coerenza cross-view.</li>
+          <li><strong>World model</strong> &#8212; genera viste <em>world-consistent</em> lungo una traiettoria, con memoria geometrica esplicita. Meno drift, output direttamente allineato per la densificazione.</li>
+        </ul>
+        <div class="callout callout--info">
+          <strong>Perche qui:</strong> un world model non rende una posa isolata, ma completa una porzione di mondo. E esattamente la primitiva che serve per passare da osservazioni sparse a uno <span class="hl">splat denso navigabile</span>.
+        </div>
+      </div>
+
+      <div class="anim anim--right" style="--d:120ms">
+        <div class="table-wrap">
+          <svg viewBox="0 0 460 320" width="100%" role="img" aria-label="Diagramma: dalla posa sotto-campionata alla densificazione dello splat via world model">
+            <defs>
+              <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#22d3ee"/></marker>
+            </defs>
+            <rect x="14" y="20" width="170" height="56" rx="10" fill="#0f1f2b" stroke="#22d3ee" stroke-width="1.4"/>
+            <text x="99" y="44" text-anchor="middle" fill="#e6f6fb" font-family="ui-monospace,monospace" font-size="13" font-weight="600">NBV pose</text>
+            <text x="99" y="62" text-anchor="middle" fill="#7f9aa8" font-family="ui-monospace,monospace" font-size="10">zona sotto-osservata</text>
+
+            <rect x="14" y="132" width="430" height="84" rx="10" fill="#171228" stroke="#a78bfa" stroke-width="1.4"/>
+            <text x="229" y="158" text-anchor="middle" fill="#efeaff" font-family="ui-monospace,monospace" font-size="13" font-weight="600">WORLD MODEL</text>
+            <text x="229" y="178" text-anchor="middle" fill="#b3a6dd" font-family="ui-monospace,monospace" font-size="10">viste coerenti + depth / normali / camera</text>
+            <text x="229" y="196" text-anchor="middle" fill="#b3a6dd" font-family="ui-monospace,monospace" font-size="10">memoria geometrica esplicita</text>
+
+            <rect x="14" y="252" width="430" height="52" rx="10" fill="#0f2419" stroke="#34d399" stroke-width="1.4"/>
+            <text x="229" y="276" text-anchor="middle" fill="#dcfce7" font-family="ui-monospace,monospace" font-size="13" font-weight="600">splat densificato</text>
+            <text x="229" y="293" text-anchor="middle" fill="#86c8a6" font-family="ui-monospace,monospace" font-size="10">rendering plausibile, niente floater</text>
+
+            <path d="M99,76 L99,128" stroke="#22d3ee" stroke-width="1.6" fill="none" marker-end="url(#ah)"/>
+            <path d="M229,216 L229,248" stroke="#22d3ee" stroke-width="1.6" fill="none" marker-end="url(#ah)"/>
+            <path d="M444,278 C462,200 462,90 184,48" stroke="#7f9aa8" stroke-width="1.2" stroke-dasharray="4 4" fill="none" marker-end="url(#ah)"/>
+            <text x="372" y="112" text-anchor="middle" fill="#7f9aa8" font-family="ui-monospace,monospace" font-size="9.5">coverage</text>
+            <text x="372" y="124" text-anchor="middle" fill="#7f9aa8" font-family="ui-monospace,monospace" font-size="9.5">+ next pose</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <p class="ref">Inquadramento Goal 1: NBV &#8594; view-gen &#8594; densify. I due riferimenti seguenti sono entrambi <em>world-consistency / view-generation</em>, NON metodi anchor-3DGS.</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">01 / 02</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">GOAL 1 / DUE RIFERIMENTI WORLD-MODEL</span>
+    <h2 class="slide__title">HY-World 2.0 &amp; <span class="hl-2">AnchorWeave</span></h2>
+    <p class="slide__subtitle">Uno produce asset 3DGS feed-forward; l&#8217;altro genera video world-consistent. Onesti su maturita e fattibilita nel nostro stack.</p>
+
+    <div class="grid-2">
+      <div class="card card--accent anim" style="--d:0ms">
+        <div class="row spread">
+          <span class="card__title">HY-World 2.0</span>
+          <span class="pill pill--cyan">Tencent Hunyuan</span>
+        </div>
+        <div class="card__body">
+          <p class="muted">World model multi-modale: da input sparsi produce <strong>asset 3DGS / mesh / point cloud</strong> veri, non video. Pertinente diretto al nostro problema &#8220;sparso &#8594; splat denso&#8221;.</p>
+          <ul class="list list--check">
+            <li><span class="hl-w">WorldMirror 2.0</span> &#8212; feed-forward ~1.2B, single-GPU: in <em>un</em> pass predice depth + normali + camera + point cloud densa + <strong>attributi 3DGS</strong>. Esattamente i dati allineati per inizializzare gaussiane senza ottimizzazione per-scena.</li>
+            <li><span class="hl-w">WorldStereo 2.0</span> &#8212; genera keyframe multi-view <strong>coerenti</strong> lungo le traiettorie (memory-guided, controllo camera via raggi di Plucker). Il generatore novel-view per riempire i buchi.</li>
+            <li><span class="hl-w">WorldNav</span> &#8212; trajectory planning reconstruction-aware: decide <em>dove</em> generare. Stesso concetto del nostro seeding da capture pose.</li>
+          </ul>
+          <p class="ref">SOTA su 7-Scenes / NRGBD / DTU (acc. 0.012, compl. 0.016 ad alta risoluzione). Codice open-source.</p>
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:120ms">
+        <div class="row spread">
+          <span class="card__title">AnchorWeave</span>
+          <span class="pill pill--amber">arXiv 2602.14941</span>
+        </div>
+        <div class="card__body">
+          <div class="callout callout--warn">
+            <strong>NON e anchor-3DGS.</strong> Qui &#8220;anchor&#8221; = memorie spaziali locali recuperate e intrecciate, NON ancore di gaussiane stile Scaffold-GS. Parente di <span class="hl">HY-World</span>, non dei metodi anchor-based.
+          </div>
+          <p class="muted">Generazione video world-consistent con <strong>memorie geometriche locali</strong>: una point cloud per-frame con la sua posa, invece di una singola memoria 3D globale.</p>
+          <ul class="list">
+            <li>Memorie locali indipendenti &#8594; <strong>niente accumulo</strong> di disallineamento cross-view (anti drift di posa).</li>
+            <li><span class="hl-w">Coverage-driven retrieval</span>: recupera le memorie in base alla copertura lungo la traiettoria target. Affine al nostro coverage-driven seeding.</li>
+            <li>Multi-anchor weaving: riconcilia le incoerenze tra memorie durante la generazione.</li>
+          </ul>
+          <p class="ref">Rappresentazione = point cloud locali, NO splatting differenziabile &#8594; ne adottiamo i <em>meccanismi</em> (memoria locale per-posa, retrieval per coverage) nell&#8217;explorer e nel grafo topologico P1.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout--info anim" style="--d:240ms">
+      <strong>Usi proposti nel nostro loop.</strong>
+      <ul class="list">
+        <li><span class="hl-w">WorldMirror 2.0 come predittore del ramo densify.</span> A ogni posa NBV proposta, un forward pass restituisce point cloud + depth + normali + attributi 3DGS: usali per <strong>seedare nuove gaussiane</strong> dove la coverage e debole e come <strong>supervisione geometrica</strong> nel trainer. Affianca la diffusion novel-view come secondo generatore, con A/B sulla plausibilita (Goal A).</li>
+        <li><span class="hl-w">Prior injection dalle nostre capture pose.</span> Diamo a WorldMirror intrinseci/estrinseci gia noti (ADR-0009) per ancorare la predizione alla geometria reale invece di farla allucinare &#8212; lo stesso prior che oggi valida i seed via render-alpha.</li>
+        <li><span class="hl-w">Memoria locale stile AnchorWeave nell&#8217;explorer.</span> Teniamo una point cloud locale per-walk indicizzata per posa invece di un&#8217;unica mappa fusa: alimenta il grafo topologico (P1) e taglia il drift cross-seed senza ri-fondere tutto.</li>
+        <li><span class="hl-w">Retrieval guidato dalla coverage</span> per scegliere quali viste passate condizionano la prossima densificazione &#8212; lo stesso criterio che gia guida il nostro seeding.</li>
+      </ul>
+      <p class="ref">Pezzo single-GPU realistico: <strong>WorldMirror (~1.2B)</strong>. Il resto della pipeline HY-World (HY-Pano ~80B, DMD, training 3DGS finale) resta fuori scala &#8212; non lo adottiamo.</p>
+    </div>
+
+    <p class="ref">Fonti: HY-World 2.0 &#8212; arXiv:2604.14268 &#183; github.com/Tencent-Hunyuan/HY-World-2.0 &#183; huggingface.co/tencent/HY-World-2.0 | AnchorWeave &#8212; Zun Wang et al., arXiv:2602.14941 (cs.CV, feb 2026) &#183; github.com/wz0919/AnchorWeave</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">02 / 02</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker anim">VLN / SCOPERTE — SINTESI</span>
+    <h2 class="slide__title anim" style="--d:60ms">VLN &amp; embodied exploration: le leve per la coverage 3DGS</h2>
+    <p class="slide__subtitle anim" style="--d:120ms">Tutto filtrato dallo stack: Qwen via vLLM, renderer gsplat, <span class="hl">single-GPU</span>, <span class="hl-w">training-free / inference-time</span>. Mappato sui file reali della pipeline.</p>
+
+    <div class="cols">
+      <div class="stack">
+        <div class="callout callout--info anim" style="--d:160ms">
+          <strong>Frontier =</strong> il bordo tra noto e ignoto. Nel VLN classico: confine tra mappa esplorata e celle mai osservate. <span class="hl-w">Per noi</span>: bordo verso l'<em>incertezza dello splat</em> — dove la ricostruzione e debole (blurry = alta incertezza). Si esplora seedando proprio li.
+        </div>
+        <ul class="list list--check">
+          <li class="anim" style="--d:220ms"><strong>P1</strong> e economico e attacca <em>subito</em> l'orbiting → punto di partenza</li>
+          <li class="anim" style="--d:280ms"><strong>P0</strong> e l'unica cosa veramente on-objective (NBV per ricostruzione)</li>
+          <li class="anim" style="--d:340ms"><strong>P2/P3</strong> arrivano quasi gratis con mappa-incertezza + grafo topologico</li>
+        </ul>
+      </div>
+
+      <div class="anim anim--right" style="--d:200ms">
+        <div class="table-wrap">
+          <svg viewBox="0 0 420 300" width="100%" role="img" aria-label="Diagramma frontier verso incertezza dello splat">
+            <defs>
+              <radialGradient id="unc" cx="78%" cy="50%" r="60%">
+                <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.55"/>
+                <stop offset="100%" stop-color="#f59e0b" stop-opacity="0"/>
+              </radialGradient>
+            </defs>
+            <rect x="0" y="0" width="420" height="300" fill="none"/>
+            <rect x="20" y="30" width="200" height="240" rx="10" fill="#22d3ee" fill-opacity="0.10" stroke="#22d3ee" stroke-opacity="0.45"/>
+            <text x="40" y="58" fill="#cffafe" font-family="monospace" font-size="13">NOTO</text>
+            <text x="40" y="76" fill="#7dd3fc" font-family="monospace" font-size="11">splat ben coperto</text>
+            <rect x="220" y="30" width="180" height="240" rx="10" fill="url(#unc)"/>
+            <text x="300" y="58" fill="#fde68a" font-family="monospace" font-size="13">IGNOTO</text>
+            <text x="262" y="76" fill="#fbbf24" font-family="monospace" font-size="11">alta incertezza</text>
+            <line x1="220" y1="30" x2="220" y2="270" stroke="#a78bfa" stroke-width="3" stroke-dasharray="7 6"/>
+            <text x="150" y="160" fill="#c4b5fd" font-family="monospace" font-size="12" transform="rotate(-90 150 160)">FRONTIER</text>
+            <circle cx="120" cy="150" r="6" fill="#22d3ee"/>
+            <line x1="120" y1="150" x2="280" y2="150" stroke="#a78bfa" stroke-width="2" marker-end="url(#a)"/>
+            <circle cx="280" cy="150" r="5" fill="#f59e0b"/>
+            <defs><marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#a78bfa"/></marker></defs>
+            <text x="40" y="258" fill="#94a3b8" font-family="monospace" font-size="10.5">seed verso il bordo dell'incertezza</text>
+          </svg>
+        </div>
+      </div>
+    </div>
+
+    <p class="ref anim" style="--d:380ms">Fonti: FisherRF (ECCV'24), GauSS-MI (RSS'25), MapGPT (ACL'24), WMNav (IROS'25), StructNav (RSS'23). Note: numeri headline su GPT-4V — trasferibilita su Qwen self-hosted non verificata.</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">01 / 02</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker anim">VLN / SCOPERTE — 4 LEVE → FILE</span>
+    <h2 class="slide__title anim" style="--d:60ms">Le 3+1 leve, mappate ai moduli</h2>
+
+    <div class="grid-2">
+      <div class="card card--accent anim" style="--d:120ms">
+        <div class="row spread">
+          <span class="card__num">P0</span>
+          <span class="pill pill--ghost">gia vista</span>
+        </div>
+        <div class="card__title">NBV su incertezza dello splat</div>
+        <div class="card__body">Information-gain calcolato <strong>sullo splat</strong> (FisherRF / GauSS-MI) al posto delle euristiche proxy <code>farthest-point</code> e <code>med_depth × alpha</code>. Seed + prompt + selezione finale pesati per IG.</div>
+        <div class="row" style="margin-top:.6rem">
+          <span class="pill pill--cyan mono">session.py</span>
+          <span class="pill pill--cyan mono">nav/observation.py</span>
+          <span class="pill pill--cyan mono">filters/pose_filters.py</span>
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:200ms">
+        <div class="row spread">
+          <span class="card__num">P1</span>
+          <span class="pill pill--green">START</span>
+        </div>
+        <div class="card__title">Memoria topologica + prompting MapGPT (anti-orbiting)</div>
+        <div class="card__body">Grafo dei nodi visitati passato al VLM come <strong>adiacenza in linguaggio naturale</strong> (mai coordinate grezze). Da azione locale singola → piano multi-step con backtracking. Attacca direttamente l'orbiting di StuckGuard/CoveragePlateau.</div>
+        <div class="row" style="margin-top:.6rem">
+          <span class="pill pill--cyan mono">nav/explorer.py</span>
+          <span class="pill mono">nav/observation.py</span>
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:280ms">
+        <div class="row spread">
+          <span class="card__num">P2</span>
+          <span class="pill pill--ghost">quasi gratis</span>
+        </div>
+        <div class="card__title">Frontier + information-gain seeding (StructNav)</div>
+        <div class="card__body">Rileva i <strong>frontier</strong> sulla mappa di coverage e sceglie i seed per utilita/IG (idealmente l'incertezza di P0, altrimenti coverage-gain geometrico). Le pose COLMAP restano prior di validita, ma si seleziona tra esse per frontier-utility.</div>
+        <div class="row" style="margin-top:.6rem">
+          <span class="pill pill--cyan mono">session.py</span>
+          <span class="pill pill--cyan mono">metrics/coverage.py</span>
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:360ms">
+        <div class="row spread">
+          <span class="card__num">P3</span>
+          <span class="pill pill--ghost">quasi gratis</span>
+        </div>
+        <div class="card__title">Curiosity Value Map (WMNav)</div>
+        <div class="card__body">Mappa-griglia 0–10 "quanto vale esplorare qui", predetta dal VLM e aggiornata fondendo predizioni + osservazioni. Memoria spaziale persistente che si fonde naturalmente con la mappa di incertezza P0 (<em>curiosity = incertezza alta</em>).</div>
+        <div class="row" style="margin-top:.6rem">
+          <span class="pill pill--cyan mono">nav/observation.py</span>
+          <span class="pill pill--cyan mono">nav/explorer.py</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout--warn anim" style="--d:420ms" style2="">
+      <strong>Percorso consigliato:</strong> parti da <span class="hl-w">P1</span> (economico, training-free, taglia subito l'orbiting) e in parallelo fai uno <span class="hl-w">spike su P0</span> (FisherRF sul gsplat, unica leva davvero on-objective che abilita anche l'instruction-following futuro). <span class="hl">P2/P3</span> seguono quasi gratis una volta disponibili grafo topologico e mappa di incertezza.
+    </div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">02 / 02</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">06 / GOAL 2</span>
+    <h2 class="slide__title">Goal 2 &mdash; Fine-tuning di un modello robotico <span class="hl-2">VLA</span></h2>
+    <p class="slide__subtitle">Dal <em>prompting zero-shot</em> di un VLM general-purpose a una policy <strong>Vision-Language-Action</strong> specializzata sulla navigazione-per-coverage.</p>
+
+    <div class="cols">
+      <div class="stack">
+        <div class="callout callout--info anim" style="--d:0ms">
+          <strong>Il salto.</strong> Oggi: <code>render(pose) &rarr; Qwen3.5-9B &rarr; verbo egocentrico</code>, ragionamento generico, latenza alta, comportamento non distillato. Domani: un <span class="hl">VLA fine-tuned</span> che mappa l'osservazione direttamente sull'azione, internalizzando l'euristica di esplorazione.
+        </div>
+        <ul class="list list--check anim" style="--d:80ms">
+          <li><span class="hl-w">Stessa anatomia</span>: VLM backbone (congelabile) + testa d'azione.</li>
+          <li>Adattamento a un nuovo embodiment/task via <strong>fine-tuning su dimostrazioni</strong> (decine&ndash;centinaia per task).</li>
+          <li>Il nostro action set egocentrico discreto (ADR-0004) mappa <span class="hl">1:1</span> sull'azione-come-testo di OpenVLA.</li>
+        </ul>
+      </div>
+
+      <div class="stack">
+        <div class="table-wrap anim" style="--d:160ms">
+          <table class="tbl">
+            <thead>
+              <tr><th>Modello</th><th>Backbone / testa</th><th>Azione</th><th>Note</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><span class="hl-w">OpenVLA</span> 7B</td><td>Llama-2 + DINOv2/SigLIP</td><td>token discreti</td><td><span class="pill pill--green">LoRA single-GPU</span></td></tr>
+              <tr><td>&pi;0 ~3.3B</td><td>PaliGemma + action expert</td><td>flow-matching 50Hz</td><td><span class="pill pill--cyan">via LeRobot</span></td></tr>
+              <tr><td>Octo</td><td>transformer + diffusion</td><td>continua</td><td><span class="pill pill--ghost">nuovi spazi obs/act</span></td></tr>
+              <tr><td>RT-2 55B</td><td>closed (Google)</td><td>azioni-come-testo</td><td><span class="pill pill--red">closed / heavy</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="ref anim" style="--d:240ms">Kim et al., OpenVLA, CoRL 2024 (arXiv:2406.09246) &middot; Black et al., &pi;0, arXiv:2410.24164 &middot; Ghosh et al., Octo, RSS 2024 (arXiv:2405.12213) &middot; Brohan et al., RT-2, CoRL 2023 (arXiv:2307.15818)</p>
+      </div>
+    </div>
+
+    <div class="callout callout--warn anim" style="--d:320ms">
+      <strong>Caveat di dominio.</strong> I VLA nascono per <em>manipolazione</em>, non per navigazione-per-coverage: il transfer e sui <span class="hl-w">meccanismi</span> (tokenizzazione azione, fine-tuning data-frugale), non sui numeri di success-rate.
+    </div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">06 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">07 / GOAL 2</span>
+    <h2 class="slide__title">Lo splat come <span class="hl">fabbrica di dati</span> &mdash; e perche e single-GPU</h2>
+    <p class="slide__subtitle">La pipeline esistente <em>e gia</em> un generatore di coppie (osservazione, azione): il formato di dimostrazione che i VLA consumano.</p>
+
+    <div class="table-wrap anim" style="--d:0ms">
+      <div class="flow">
+        <div class="node node--accent"><div class="node__name">render(pose)</div><div class="node__sub">viste novel dallo splat</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="node"><div class="node__name">Observation</div><div class="node__sub">rgb + depth + top-down</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="node"><div class="node__name">Action</div><div class="node__sub">verbo egocentrico</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="node"><div class="node__name">pose_filters.py</div><div class="node__sub">filtro coverage-gain</div></div>
+        <span class="arrow">&#8594;</span>
+        <div class="node node--accent"><div class="node__name">dataset BC</div><div class="node__sub">(obs &rarr; action)</div></div>
+      </div>
+    </div>
+
+    <div class="cols">
+      <div class="stack">
+        <ul class="list list--num anim" style="--d:80ms">
+          <li><span class="hl-w">Rollout del VLM zero-shot</span> &rarr; traiettorie grezze.</li>
+          <li>Filtro per qualita/coverage-gain (logica gia in <code>pose_filters.py</code>) &rarr; dimostrazioni "buone".</li>
+          <li><span class="hl">Behavior cloning</span> per distillare un VLA leggero dal walker Qwen.</li>
+        </ul>
+        <div class="callout anim" style="--d:160ms">
+          Lo splat e un <span class="hl-w">simulatore foto-realistico gratuito</span>: viste novel a costo di solo rendering. Niente world model generativo da addestrare &mdash; aggira il collo di bottiglia dati dei VLA reali.
+        </div>
+      </div>
+
+      <div class="stack">
+        <div class="grid-2">
+          <div class="stat anim" style="--d:160ms"><div class="stat__value is-violet">1.4%</div><div class="stat__label">parametri addestrati (OpenVLA + LoRA)</div></div>
+          <div class="stat anim" style="--d:200ms"><div class="stat__value">10&ndash;15h</div><div class="stat__label">su una singola A100</div></div>
+          <div class="stat anim" style="--d:240ms"><div class="stat__value">~16&ndash;18 GB</div><div class="stat__label">VRAM inferenza OFT</div></div>
+          <div class="stat anim" style="--d:280ms"><div class="stat__value">8&times;</div><div class="stat__label">meno compute vs full FT</div></div>
+        </div>
+        <div class="callout callout--danger anim" style="--d:320ms">
+          <strong>Restare su LoRA.</strong> La ricetta <em>OpenVLA-OFT full</em> richiede 8&times;A100/H100 per 1&ndash;2 giorni &rarr; <span class="hl-w">non</span> single-GPU. Adottarne le <span class="hl">idee</span> (azioni continue, action chunking, <code>L1 &gt; diffusion</code> su dati rumorosi), non il training.
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout--warn anim" style="--d:380ms">
+      <strong>Dipendenza.</strong> Goal 2 e il loop <em>Tier-4 (retrain + eval)</em> oggi differito negli ADR: serve prima sbloccare un <span class="hl-w">segnale di reward/qualita</span> (es. coverage-gain / information-gain) che etichetti le dimostrazioni.
+    </div>
+
+    <p class="ref anim" style="--d:420ms">OpenVLA LoRA single-A100, 1.4% params, quant. consumer-GPU (arXiv:2406.09246) &middot; OpenVLA-OFT: parallel decoding, action chunking, L1 regression, 26&times; speed, 97.1% LIBERO (arXiv:2502.19645) &middot; &pi;0-FAST: tokenizz. DCT+BPE, 5&times; training (hf.co/blog/pi0)</p>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">07 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker anim">08 / ROADMAP</span>
+    <h2 class="slide__title anim" style="--d:80ms">Roadmap a fasi: <span class="hl">ORA</span> &#8594; <span class="hl-2">PROSSIMO</span> &#8594; <span class="hl-w">POI</span></h2>
+    <p class="slide__subtitle anim" style="--d:160ms">Dal loop locale che gira oggi verso il segnale di incertezza sullo splat e il fine-tuning VLA. Tutto entro il vincolo trasversale: <span class="mono">Qwen via vLLM, gsplat, single-GPU, training-free first</span>.</p>
+
+    <div class="row anim" style="--d:200ms">
+      <span class="pill pill--cyan"><span class="dot"></span> ORA &middot; in repo</span>
+      <span class="pill"><span class="dot dot--amber"></span> PROSSIMO &middot; spike</span>
+      <span class="pill pill--ghost"><span class="dot dot--mute"></span> POI &middot; ricerca</span>
+    </div>
+
+    <div class="table-wrap anim" style="--d:240ms">
+      <div class="flow">
+        <div class="node node--accent">
+          <div class="node__name">ORA</div>
+          <div class="node__sub">loop locale operativo</div>
+        </div>
+        <span class="arrow">&#8594;</span>
+        <div class="node">
+          <div class="node__name">PROSSIMO</div>
+          <div class="node__sub">incertezza + memoria</div>
+        </div>
+        <span class="arrow">&#8594;</span>
+        <div class="node">
+          <div class="node__name">POI</div>
+          <div class="node__sub">densify + VLA</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <div class="card card--accent anim" style="--d:0ms">
+        <div class="card__num">01</div>
+        <div class="card__title"><span class="hl">ORA</span> &middot; baseline che gira</div>
+        <div class="card__body">
+          <ul class="list list--check">
+            <li>Metriche <strong>Tier-1</strong> (floor coverage% + novelty) e <strong>Tier-2</strong> (cella pose-space &times; direction-bin)</li>
+            <li><strong>Seeding da capture-pose</strong> del training (ADR-0009): GT di dove una camera vede geometria reale</li>
+            <li>Loop locale <code>render &#8594; Observation &#8594; VLM &#8594; action</code>, multi-seed + StopPolicies</li>
+            <li>Filtri deliverable: quality-drop &#8594; novelty dedup &#8594; budget cap</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:120ms">
+        <div class="card__num">02</div>
+        <div class="card__title"><span class="hl-2">PROSSIMO</span> &middot; segnale on-objective</div>
+        <div class="card__body">
+          <ul class="list list--num">
+            <li><strong>Spike FisherRF su gsplat</strong>: information-gain calcolato <em>sullo splat</em>, non euristiche proxy (farthest-point, med_depth&times;alpha)</li>
+            <li><strong>P1 &middot; memoria topologica</strong> + prompting MapGPT-style: grafo adiacenze in NL al VLM, anti-orbiting, piano multi-step con backtracking</li>
+            <li><strong>Frontier seeding</strong>: frontier sulla coverage-map, score di utility/information-gain mantenendo le pose COLMAP come prior</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:240ms">
+        <div class="card__num">03</div>
+        <div class="card__title"><span class="hl-w">POI</span> &middot; chiudere i due Goal</div>
+        <div class="card__body">
+          <ul class="list">
+            <li><strong>Goal 1 &middot; densify</strong>: anchor-based (Scaffold/Octree-GS) con growing error-based, e world-model (HY-World) per completare le viste mancanti</li>
+            <li><strong>Goal 2 &middot; fine-tuning VLA</strong>: da prompting zero-shot a <code>OpenVLA + LoRA</code>, dataset di behavior-cloning generato dalla nostra pipeline (lo splat &egrave; gi&agrave; il simulatore)</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout callout--warn anim" style="--d:320ms">
+      <strong>Sequenza consigliata:</strong> partire da <span class="hl-2">P1</span> (economico, training-free, attacca subito l&apos;orbiting) e in parallelo lo <span class="hl-2">spike P0/FisherRF</span> &mdash; l&apos;unica cosa veramente on-objective. Frontier seeding e curiosity-map vengono quasi gratis una volta disponibili mappa di incertezza e grafo topologico. <span class="hl-w">Goal 2 dipende dal Tier-4</span> (retrain+eval), oggi differito: va sbloccato prima il segnale di reward.
+    </div>
+
+    <div class="ref">FisherRF (ECCV 2024) &middot; GauSS-MI (RSS 2025) &middot; MapGPT (ACL 2024) &middot; Scaffold/Octree-GS &middot; HY-World 2.0 &middot; OpenVLA+LoRA (CoRL 2024) &mdash; cfr. ADR 0004 / 0009</div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">08 / 09</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">07 / RISCHI &amp; CAVEAT</span>
+    <h2 class="slide__title">Cosa può smentirci — <span class="hl">verifica avversariale</span></h2>
+    <p class="slide__subtitle">I claim headline che abbiamo citato non sono garanzie. Quattro rischi da mettere in conto <em>prima</em> di investire.</p>
+
+    <div class="grid-2">
+      <div class="card card--accent anim" style="--d:0ms">
+        <div class="card__num">01</div>
+        <div class="card__title">Qwen <span class="hl-w">&ne;</span> GPT-4V</div>
+        <div class="card__body">
+          I numeri di <strong>MapGPT</strong> e <strong>WMNav</strong> sono su <span class="hl-2">GPT-4V via API</span>. Il transfer architetturale è solido, ma il ragionamento topologico su <code>Qwen3.5-9B</code> self-hosted <em>non è verificato</em>. Probabile servano few-shot o structured-output scaffolding.
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:80ms">
+        <div class="card__num">02</div>
+        <div class="card__title">Costo ingegneristico P0</div>
+        <div class="card__body">
+          Integrare <span class="hl">FI/MI</span> (FisherRF / GauSS-MI) sul loop <code>gsplat</code> single-GPU non è banale. I <strong>70 fps</strong> di FisherRF sono riportati <em>senza nominare la GPU</em>: non assumiamoli sul nostro hardware.
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:160ms">
+        <div class="card__num">03</div>
+        <div class="card__title">Task mismatch</div>
+        <div class="card__body">
+          StructNav / PONI / WMNav sono <span class="hl-2">ObjectGoal-nav</span> su benchmark indoor. Il nostro task è <span class="hl">coverage per ricostruzione 3DGS</span>. I meccanismi (frontier, curiosity, memoria) trasferiscono — i <em>numeri assoluti di successo no</em>.
+        </div>
+      </div>
+
+      <div class="card anim" style="--d:240ms">
+        <div class="card__num">04</div>
+        <div class="card__title">"Modulare è SOTA" confutato</div>
+        <div class="card__body">
+          La pipeline modulare (render &rarr; VLM &rarr; azione) non è uno stato dell'arte: è un <em>baseline pragmatico</em>. Goal 1/2 (loop NBV&rarr;diffusion, VLA fine-tuned) esistono <strong>perché</strong> lo zero-shot modulare non basta.
+        </div>
+      </div>
+    </div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">07 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">07 / RISCHI &amp; CAVEAT</span>
+    <h2 class="slide__title">Dove si rompe il transfer — <span class="hl-2">mappa dei salti</span></h2>
+    <p class="slide__subtitle">Ogni rischio è un <em>gap</em> tra ciò che la fonte dimostra e ciò di cui abbiamo bisogno nel nostro stack.</p>
+
+    <div class="table-wrap anim" style="--d:0ms">
+      <svg viewBox="0 0 920 300" width="100%" role="img" aria-label="Mappa dei salti tra claim delle fonti e il nostro contesto">
+        <defs>
+          <marker id="rk-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0 0 L10 5 L0 10 z" fill="#f5b041"/>
+          </marker>
+          <linearGradient id="rk-g" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="#22d3ee"/>
+            <stop offset="1" stop-color="#a78bfa"/>
+          </linearGradient>
+        </defs>
+
+        <!-- colonna FONTE -->
+        <text x="150" y="28" fill="#7dd3fc" font-family="monospace" font-size="13" text-anchor="middle" letter-spacing="1">CLAIM DELLA FONTE</text>
+        <!-- colonna GAP -->
+        <text x="460" y="28" fill="#f5b041" font-family="monospace" font-size="13" text-anchor="middle" letter-spacing="1">GAP</text>
+        <!-- colonna NOSTRO -->
+        <text x="770" y="28" fill="#c4b5fd" font-family="monospace" font-size="13" text-anchor="middle" letter-spacing="1">NEL NOSTRO STACK</text>
+
+        <!-- riga 1 -->
+        <rect x="20" y="48" width="260" height="44" rx="8" fill="#0e1726" stroke="#1f3a52"/>
+        <text x="150" y="68" fill="#e6f0f7" font-family="monospace" font-size="12" text-anchor="middle">MapGPT/WMNav su GPT-4V</text>
+        <text x="150" y="84" fill="#7c8aa0" font-family="monospace" font-size="11" text-anchor="middle">API closed, modello grande</text>
+        <line x1="282" y1="70" x2="338" y2="70" stroke="#f5b041" stroke-width="2" marker-end="url(#rk-arrow)"/>
+        <rect x="340" y="48" width="240" height="44" rx="8" fill="#1a1410" stroke="#5c4420"/>
+        <text x="460" y="74" fill="#f5b041" font-family="monospace" font-size="12" text-anchor="middle">ragionamento ? su Qwen-9B</text>
+        <line x1="582" y1="70" x2="638" y2="70" stroke="#f5b041" stroke-width="2" marker-end="url(#rk-arrow)"/>
+        <rect x="640" y="48" width="260" height="44" rx="8" fill="#120e1f" stroke="#3a2a5c"/>
+        <text x="770" y="74" fill="#e6f0f7" font-family="monospace" font-size="12" text-anchor="middle">Qwen self-hosted via vLLM</text>
+
+        <!-- riga 2 -->
+        <rect x="20" y="108" width="260" height="44" rx="8" fill="#0e1726" stroke="#1f3a52"/>
+        <text x="150" y="128" fill="#e6f0f7" font-family="monospace" font-size="12" text-anchor="middle">FisherRF: 70 fps NBV</text>
+        <text x="150" y="144" fill="#7c8aa0" font-family="monospace" font-size="11" text-anchor="middle">GPU non nominata</text>
+        <line x1="282" y1="130" x2="338" y2="130" stroke="#f5b041" stroke-width="2" marker-end="url(#rk-arrow)"/>
+        <rect x="340" y="108" width="240" height="44" rx="8" fill="#1a1410" stroke="#5c4420"/>
+        <text x="460" y="134" fill="#f5b041" font-family="monospace" font-size="12" text-anchor="middle">FI/MI nel loop = costo ?</text>
+        <line x1="582" y1="130" x2="638" y2="130" stroke="#f5b041" stroke-width="2" marker-end="url(#rk-arrow)"/>
+        <rect x="640" y="108" width="260" height="44" rx="8" fill="#120e1f" stroke="#3a2a5c"/>
+        <text x="770" y="134" fill="#e6f0f7" font-family="monospace" font-size="12" text-anchor="middle">gsplat, SINGLE-GPU</text>
+
+        <!-- riga 3 -->
+        <rect x="20" y="168" width="260" height="44" rx="8" fill="#0e1726" stroke="#1f3a52"/>
+        <text x="150" y="188" fill="#e6f0f7" font-family="monospace" font-size="12" text-anchor="middle">StructNav/PONI success%</text>
+        <text x="150" y="204" fill="#7c8aa0" font-family="monospace" font-size="11" text-anchor="middle">ObjectNav indoor</text>
+        <line x1="282" y1="190" x2="338" y2="190" stroke="#f5b041" stroke-width="2" marker-end="url(#rk-arrow)"/>
+        <rect x="340" y="168" width="240" height="44" rx="8" fill="#1a1410" stroke="#5c4420"/>
+        <text x="460" y="194" fill="#f5b041" font-family="monospace" font-size="12" text-anchor="middle">obiettivo diverso</text>
+        <line x1="582" y1="190" x2="638" y2="190" stroke="#f5b041" stroke-width="2" marker-end="url(#rk-arrow)"/>
+        <rect x="640" y="168" width="260" height="44" rx="8" fill="#120e1f" stroke="#3a2a5c"/>
+        <text x="770" y="194" fill="#e6f0f7" font-family="monospace" font-size="12" text-anchor="middle">coverage 3DGS, no goal</text>
+
+        <!-- riga 4 -->
+        <rect x="20" y="228" width="260" height="44" rx="8" fill="#0e1726" stroke="#1f3a52"/>
+        <text x="150" y="248" fill="#e6f0f7" font-family="monospace" font-size="12" text-anchor="middle">"modulare zero-shot ok"</text>
+        <text x="150" y="264" fill="#7c8aa0" font-family="monospace" font-size="11" text-anchor="middle">assunzione comoda</text>
+        <line x1="282" y1="250" x2="338" y2="250" stroke="#f5b041" stroke-width="2" marker-end="url(#rk-arrow)"/>
+        <rect x="340" y="228" width="240" height="44" rx="8" fill="#1a1410" stroke="#5c4420"/>
+        <text x="460" y="254" fill="#f5b041" font-family="monospace" font-size="12" text-anchor="middle">orbiting / euristiche proxy</text>
+        <line x1="582" y1="250" x2="638" y2="250" stroke="#f5b041" stroke-width="2" marker-end="url(#rk-arrow)"/>
+        <rect x="640" y="228" width="260" height="44" rx="8" fill="#120e1f" stroke="#3a2a5c"/>
+        <text x="770" y="254" fill="#e6f0f7" font-family="monospace" font-size="12" text-anchor="middle">serve Goal 1/2, non basta</text>
+      </svg>
+    </div>
+
+    <div class="callout callout--warn anim" style="--d:120ms">
+      <strong>Lettura onesta:</strong> i meccanismi (frontier, memoria topologica, information-gain) trasferiscono; i <span class="hl-w">numeri headline no</span>. Trattare ogni claim come ipotesi da validare sul nostro stack, non come risultato acquisito.
+    </div>
+
+    <div class="row anim" style="--d:200ms">
+      <span class="pill pill--red"><span class="dot dot--red"></span>Qwen &ne; GPT-4V</span>
+      <span class="pill pill--amber"><span class="dot dot--amber"></span>P0: costo non misurato</span>
+      <span class="pill pill--amber"><span class="dot dot--amber"></span>task mismatch</span>
+      <span class="pill pill--ghost">modulare &ne; SOTA</span>
+    </div>
+
+    <p class="ref">Fonti: MapGPT (ACL 2024) &middot; WMNav (IROS 2025) &middot; FisherRF (ECCV 2024) &middot; GauSS-MI (RSS 2025) &middot; StructNav (RSS 2023) &middot; PONI (CVPR 2022) — numeri originali su GPT-4V / hardware non specificato.</p>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">08 / 12</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">12 / RIFERIMENTI</span>
+    <h2 class="slide__title">Riferimenti <span class="hl">&amp; fonti</span></h2>
+    <p class="slide__subtitle muted">Fonti primarie raccolte dalla ricerca, raggruppate per area. Link forniti in evidenza.</p>
+
+    <div class="grid-2">
+      <div class="stack anim anim--left" style="--d:0ms">
+        <span class="pill pill--cyan">World-consistency &amp; view-generation</span>
+        <div class="ref">AnchorWeave: World-Consistent Video Generation with Retrieved Local Spatial Memories — Wang et al., arXiv 2602.14941 (cs.CV, 2026) — arxiv.org/abs/2602.14941</div>
+        <div class="ref">AnchorWeave — codice ufficiale — github.com/wz0919/AnchorWeave</div>
+        <div class="ref">AnchorWeave — Hugging Face Papers — huggingface.co/papers/2602.14941</div>
+        <div class="ref">HY-World 2.0: A Multi-Modal World Model for Reconstructing, Generating, and Simulating 3D Worlds — arXiv:2604.14268 (2026) — arxiv.org/abs/2604.14268</div>
+        <div class="ref">HY-World 2.0 — README GitHub, Tencent-Hunyuan (2026) — github.com/Tencent-Hunyuan/HY-World-2.0</div>
+        <div class="ref">tencent/HY-World-2.0 — Hugging Face model card (2026) — huggingface.co/tencent/HY-World-2.0</div>
+        <div class="ref">HY-World 2.0 — technical PDF, Tencent (2026) — 3d-models.hunyuan.tencent.com/world/world2_0/HY_World_2_0.pdf</div>
+      </div>
+
+      <div class="stack anim anim--right" style="--d:80ms">
+        <span class="pill">Anchor-based 3DGS — GOAL 1</span>
+        <div class="ref">Lu et al., Scaffold-GS: Structured 3D Gaussians for View-Adaptive Rendering — CVPR 2024 (Highlight) — arxiv.org/abs/2312.00109 ; city-super.github.io/scaffold-gs/</div>
+        <div class="ref">Scaffold-GS — codice ufficiale — github.com/city-super/Scaffold-GS ; CVPR Open Access — openaccess.thecvf.com/.../Lu_Scaffold-GS_..._CVPR_2024_paper.html</div>
+        <div class="ref">Ren et al., Octree-GS: Consistent Real-time Rendering with LOD-Structured 3D Gaussians — arXiv 2024 — arxiv.org/abs/2403.17898 ; city-super.github.io/octree-gs/</div>
+        <div class="ref">Chen et al., HAC++: Towards 100X Compression of 3D Gaussian Splatting — TPAMI 2025 (estende HAC, ECCV 2024) — arxiv.org/abs/2501.12255 ; yihangchen-ee.github.io/project_hac++/</div>
+        <div class="ref">SOGS: Second-Order Anchor for Advanced 3D Gaussian Splatting — CVPR 2025 — arxiv.org/abs/2503.07476 (pdf arxiv.org/pdf/2503.07476)</div>
+      </div>
+    </div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">12 / 13</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">12 / RIFERIMENTI</span>
+    <h2 class="slide__title">Riferimenti <span class="hl-2">— VLA &amp; embodied nav</span></h2>
+    <p class="slide__subtitle muted">Fine-tuning di policy robotiche, world models per simulazione e navigazione visiva (VLN).</p>
+
+    <div class="grid-2">
+      <div class="stack anim anim--left" style="--d:0ms">
+        <span class="pill pill--amber">VLA &amp; world models — GOAL 2</span>
+        <div class="ref">OpenVLA: An Open-Source Vision-Language-Action Model — Kim et al., CoRL 2024 — arxiv.org/abs/2406.09246</div>
+        <div class="ref">OpenVLA-OFT: Fine-Tuning VLA Models — Optimizing Speed and Success — Kim et al., 2025 — arxiv.org/html/2502.19645v1 ; openvla-oft.github.io</div>
+        <div class="ref">&#960;0: A Vision-Language-Action Flow Model for General Robot Control — Black et al. (Physical Intelligence), 2024 — arxiv.org/pdf/2410.24164</div>
+        <div class="ref">&#960;0 and &#960;0-FAST — Hugging Face / LeRobot blog, 2025 — huggingface.co/blog/pi0</div>
+        <div class="ref">Octo: An Open-Source Generalist Robot Policy — Ghosh et al., RSS 2024 — arxiv.org/abs/2405.12213</div>
+        <div class="ref">RT-2: VLA Models Transfer Web Knowledge to Robotic Control — Brohan/Zitkovich et al., CoRL 2023 — arxiv.org/abs/2307.15818</div>
+        <div class="ref">UniSim: Learning Interactive Real-World Simulators — Yang et al., ICLR 2024 (Outstanding) — arxiv.org/abs/2310.06114</div>
+        <div class="ref">Navigation World Models — Bar et al., CVPR 2025 Oral — arxiv.org/abs/2412.03572</div>
+        <div class="ref">Genie / Genie-2: Generative Interactive Environments — DeepMind, ICML 2024 — arxiv.org/abs/2402.15391</div>
+        <div class="ref">World Model for Robot Learning: A Comprehensive Survey — 2025 — arxiv.org/html/2605.00080v1</div>
+      </div>
+
+      <div class="stack anim anim--right" style="--d:80ms">
+        <span class="pill pill--green">NBV / active recon &amp; VLN</span>
+        <div class="ref">FisherRF: Active View Selection and Uncertainty Quantification for Radiance Fields — ECCV 2024 — arxiv.org/abs/2311.17874v1</div>
+        <div class="ref">GauSS-MI: Gaussian Splatting Shannon Mutual Information for Active 3D Reconstruction — RSS 2025 — arxiv.org/pdf/2504.21067</div>
+        <div class="ref">ActiveSplat: High-Fidelity Scene Reconstruction through Active Gaussian Splatting — li-yuetao.github.io/ActiveSplat/ActiveSplat.pdf</div>
+        <div class="ref">Review on Next-Best-View planning (tassonomia 5 famiglie) — 2025 — sciencedirect.com/science/article/pii/S2667393225000171</div>
+        <div class="ref">MapGPT: Map-Guided Prompting with Adaptive Path Planning for VLN — ACL 2024 — arxiv.org/html/2401.07314v2</div>
+        <div class="ref">WMNav: Integrating VLMs into World Models for Object Goal Navigation — IROS 2025 — arxiv.org/html/2503.02247v1</div>
+        <div class="ref">StructNav: Structured Scene Understanding for training-free zero-shot ObjectNav — RSS 2023 — roboticsproceedings.org/rss19/p075.pdf</div>
+        <div class="ref">PONI: Potential Functions for ObjectGoal Navigation — CVPR 2022 — semanticscholar.org/paper/PONI-...</div>
+        <div class="ref">HAMT: History Aware Multimodal Transformer for VLN — NeurIPS 2021 — arxiv.org/abs/2110.13309</div>
+        <div class="ref">Survey memoria spaziale / mappe topologiche VLN — arxiv.org/html/2402.14304v1</div>
+        <div class="ref">VLN survey — ACL 2022 — arxiv.org/pdf/2203.12667</div>
+        <div class="ref">Chaplot, Modular learning for embodied navigation (thesis) — CMU 2021 — arxiv.org/pdf/2106.13415</div>
+      </div>
+    </div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">13 / 13</span>
+  </div>
+</section>
+</main>
+<script>
+/* ============================================================
+   SPLAT LAB deck navigation + entrance reveals
+   - keyboard: arrows / space / PageUp/Down / Home / End
+   - IntersectionObserver toggles .in on the active .slide
+   - top progress bar
+   No external libraries.
+   ============================================================ */
+(function () {
+  var deck = document.querySelector('.deck');
+  var slides = Array.prototype.slice.call(document.querySelectorAll('.slide'));
+  if (!deck || !slides.length) return;
+
+  /* ---- progress bar ---- */
+  var bar = document.querySelector('.deck-progress');
+  function updateProgress() {
+    if (!bar) return;
+    var max = deck.scrollHeight - deck.clientHeight;
+    var pct = max > 0 ? (deck.scrollTop / max) * 100 : 0;
+    bar.style.width = pct + '%';
+  }
+  deck.addEventListener('scroll', updateProgress, { passive: true });
+
+  /* ---- entrance reveals ---- */
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) {
+      if (e.isIntersecting && e.intersectionRatio >= 0.55) {
+        e.target.classList.add('in');
+      }
+    });
+  }, { root: deck, threshold: [0, 0.55, 1] });
+  slides.forEach(function (s) { io.observe(s); });
+  /* first slide visible immediately */
+  if (slides[0]) slides[0].classList.add('in');
+
+  /* ---- which slide is current ---- */
+  function currentIndex() {
+    var c = deck.scrollTop + deck.clientHeight / 2;
+    for (var i = 0; i < slides.length; i++) {
+      var top = slides[i].offsetTop;
+      if (c >= top && c < top + slides[i].offsetHeight) return i;
+    }
+    return Math.round(deck.scrollTop / deck.clientHeight);
+  }
+  function goTo(i) {
+    i = Math.max(0, Math.min(slides.length - 1, i));
+    slides[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /* ---- keyboard nav ---- */
+  var FWD = { ArrowDown: 1, ArrowRight: 1, PageDown: 1, ' ': 1, Spacebar: 1 };
+  var BACK = { ArrowUp: 1, ArrowLeft: 1, PageUp: 1 };
+  document.addEventListener('keydown', function (ev) {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    var k = ev.key;
+    if (FWD[k]) { ev.preventDefault(); goTo(currentIndex() + 1); }
+    else if (BACK[k]) { ev.preventDefault(); goTo(currentIndex() - 1); }
+    else if (k === 'Home') { ev.preventDefault(); goTo(0); }
+    else if (k === 'End') { ev.preventDefault(); goTo(slides.length - 1); }
+  });
+
+  updateProgress();
+})();
+
+</script>

@@ -27,6 +27,7 @@ class Action(StrEnum):
     MOVE_UP = "move_up"
     MOVE_DOWN = "move_down"
     DESCRIBE = "describe"
+    MARK = "mark"
     STOP = "stop"
 
     @classmethod
@@ -66,6 +67,22 @@ class ActionSpace:
         return cls(step=diagonal * step_fraction)
 
 
+def capped_forward_step(
+    step: float, clearance: float | None, *, margin_factor: float = 0.5
+) -> float:
+    """Shorten a forward ``step`` so it stops short of an obstacle at ``clearance``.
+
+    ``clearance`` is the free distance ahead in scene units (e.g. the median
+    render depth in the central band). The step is clamped so the camera halts
+    ``margin_factor * step`` before the obstacle, never driving into geometry.
+    Returns the full ``step`` when ``clearance`` is unknown.
+    """
+    if clearance is None:
+        return step
+    margin = margin_factor * step
+    return float(np.clip(clearance - margin, 0.0, step))
+
+
 def _rotation_about_axis(axis: np.ndarray, angle: float) -> np.ndarray:
     """Rodrigues rotation matrix about a unit ``axis`` by ``angle`` (radians)."""
     axis = axis / np.linalg.norm(axis)
@@ -83,20 +100,34 @@ def _rotation_about_axis(axis: np.ndarray, angle: float) -> np.ndarray:
     )
 
 
-def apply_action(pose: Pose, action: Action, space: ActionSpace, up_axis: str = "y") -> Pose:
+def apply_action(
+    pose: Pose,
+    action: Action,
+    space: ActionSpace,
+    up_axis: str = "y",
+    *,
+    clearance: float | None = None,
+) -> Pose:
     """Return the pose resulting from applying ``action`` to ``pose``.
 
     ``STOP`` returns ``pose`` unchanged (its termination semantics live in
     :mod:`gaussian_robot.nav.stop`). Rotation changes are world-frame rotations
     composed as ``R_new = R_world @ R``.
+
+    ``clearance`` (free distance ahead, scene units) caps a ``FORWARD`` step so
+    the camera stops short of obstacles instead of penetrating geometry. It does
+    not affect ``BACK`` (rear clearance is unknown).
     """
-    if action in (Action.STOP, Action.DESCRIBE):
-        return pose
+    if action in (Action.STOP, Action.DESCRIBE, Action.MARK):
+        return pose  # MARK records the current viewpoint; it does not move the robot
 
     if action in (Action.FORWARD, Action.BACK):
         heading = pose.heading(up_axis)
         sign = 1.0 if action is Action.FORWARD else -1.0
-        new_pos: np.ndarray = pose.position + sign * space.step * heading
+        step = (
+            capped_forward_step(space.step, clearance) if action is Action.FORWARD else space.step
+        )
+        new_pos: np.ndarray = pose.position + sign * step * heading
         return Pose(position=new_pos, rotation=pose.rotation)
 
     if action in (Action.TURN_LEFT, Action.TURN_RIGHT):

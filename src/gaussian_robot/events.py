@@ -25,14 +25,17 @@ class SessionStartEvent:
     bounds_min: np.ndarray
     bounds_max: np.ndarray
     up_axis: str
-    total_seeds: int
+    total_seeds: int  # seeds actually launched (== len(seed_floor))
+    seed_floor: np.ndarray  # (S, 2) floor positions of the seeds walks start from
+    seed_kinds: list[str]  # per-seed provenance: "capture" | "origin_fallback" | "density" | "grid"
+    requested_seeds: int  # how many were asked for (may exceed total_seeds if some were rejected)
 
 
 @dataclass(frozen=True)
 class StepEvent:
     """Emitted after each step of a walk."""
 
-    seed_id: str
+    walk_id: str
     step: int
     budget: int
     observation: Observation
@@ -45,13 +48,33 @@ class StepEvent:
     coverage_pose_space: float
     sampled_floor: np.ndarray  # (N, 2)
     trail_floor: np.ndarray  # (M, 2)
+    blocked: bool = False  # a FORWARD step halted short of an obstacle (no move committed)
+
+
+@dataclass(frozen=True)
+class MarkEvent:
+    """Emitted when the VLM marks the current viewpoint as a pose to fill in."""
+
+    walk_id: str
+    step: int
+    floor: np.ndarray  # (2,) floor-plane position of the marked pose
+    count: int  # total marks accumulated this session so far
+
+
+@dataclass(frozen=True)
+class WalkEndEvent:
+    """Emitted when one walk ends, carrying *why* it stopped."""
+
+    walk_id: str
+    reason: str  # coverage_plateau | bounds | stuck | step_budget
+    steps: int
 
 
 @dataclass(frozen=True)
 class SceneDescribeEvent:
     """Emitted when the VLM describes (or re-describes) the scene."""
 
-    seed_id: str
+    walk_id: str
     step: int
     description: str
 
@@ -65,5 +88,7 @@ class SessionEndEvent:
     total_poses: int
 
 
-SessionEvent = SessionStartEvent | StepEvent | SceneDescribeEvent | SessionEndEvent
+SessionEvent = (
+    SessionStartEvent | StepEvent | MarkEvent | WalkEndEvent | SceneDescribeEvent | SessionEndEvent
+)
 EventSink = Callable[[SessionEvent], None]

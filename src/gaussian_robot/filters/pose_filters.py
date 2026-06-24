@@ -27,7 +27,7 @@ class FilteredPose:
     """A pose that survived filtering, with selection metadata."""
 
     pose: Pose
-    seed_id: str
+    walk_id: str
     novelty: float
     confidence: float
 
@@ -107,7 +107,7 @@ def filter_poses(
         out.append(
             FilteredPose(
                 pose=sample.pose,
-                seed_id=sample.seed_id,
+                walk_id=sample.walk_id,
                 novelty=novelty,
                 confidence=sample.confidence,
             )

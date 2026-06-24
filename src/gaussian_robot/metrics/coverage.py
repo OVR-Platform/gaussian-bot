@@ -55,7 +55,7 @@ class PoseSample:
     """A sampled pose plus provenance/metadata used by metrics and filtering."""
 
     pose: Pose
-    seed_id: str = ""
+    walk_id: str = ""
     confidence: float = 1.0
 
 
@@ -94,8 +94,8 @@ class CoverageState:
     def add(self, sample: PoseSample) -> None:
         self._samples.append(sample)
 
-    def add_pose(self, pose: Pose, *, seed_id: str = "", confidence: float = 1.0) -> None:
-        self._samples.append(PoseSample(pose=pose, seed_id=seed_id, confidence=confidence))
+    def add_pose(self, pose: Pose, *, walk_id: str = "", confidence: float = 1.0) -> None:
+        self._samples.append(PoseSample(pose=pose, walk_id=walk_id, confidence=confidence))
 
     def positions(self) -> np.ndarray:
         """``(N, 3)`` array of sampled positions (empty ``(0, 3)`` if none)."""

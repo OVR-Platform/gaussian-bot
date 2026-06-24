@@ -23,6 +23,19 @@ from gaussian_robot.metrics.coverage import CoverageState, floor_coverage
 from gaussian_robot.nav.action import Action
 from gaussian_robot.render.camera import Pose
 
+# Actions that don't translate the camera on the floor plane. Their (near-zero)
+# novelty must not be read as a coverage plateau.
+_NON_TRANSLATING = frozenset(
+    {
+        Action.TURN_LEFT,
+        Action.TURN_RIGHT,
+        Action.LOOK_UP,
+        Action.LOOK_DOWN,
+        Action.DESCRIBE,
+        Action.MARK,
+    }
+)
+
 
 @dataclass
 class WalkContext:
@@ -39,6 +52,8 @@ class WalkContext:
 class StopPolicy(Protocol):
     """Ends a walk. Stateful: call :meth:`reset` before each walk."""
 
+    reason: str
+
     def reset(self) -> None: ...
 
     def update(self, ctx: WalkContext) -> None: ...
@@ -51,6 +66,7 @@ class StepBudget:
     """Hard cap on steps per walk (safety net)."""
 
     max_steps: int = 40
+    reason: str = "step_budget"
 
     def __post_init__(self) -> None:
         if self.max_steps <= 0:
@@ -68,6 +84,7 @@ class StepBudget:
 class BoundsGuard:
     """Stops when a render is degenerate (out of bounds / empty)."""
 
+    reason: str = "bounds"
     _triggered: bool = False
 
     def reset(self) -> None:
@@ -85,14 +102,17 @@ class BoundsGuard:
 class CoveragePlateau:
     """Primary, objective walk-terminator.
 
-    Counts consecutive steps that are "unproductive": either the current pose's
-    novelty is below ``novelty_delta`` **or** the VLM emitted ``STOP`` (the
-    demoted vote, ADR-0006). Resets to 0 on a novel step. Stops when the count
-    reaches ``window``.
+    Counts consecutive **translation** steps whose novelty is below
+    ``novelty_delta`` (plus the demoted VLM ``STOP`` vote, ADR-0006). Pure
+    rotations (turn/look) and ``describe`` are *neutral* — they neither count
+    nor reset — because scanning in place legitimately produces no novelty and
+    must not be mistaken for a plateau. Resets to 0 on a novel translation.
+    Stops when the count reaches ``window``.
     """
 
     novelty_delta: float
     window: int = 5
+    reason: str = "coverage_plateau"
     _count: int = 0
 
     def __post_init__(self) -> None:
@@ -103,8 +123,12 @@ class CoveragePlateau:
         self._count = 0
 
     def update(self, ctx: WalkContext) -> None:
-        unproductive = ctx.novelty < self.novelty_delta or ctx.action is Action.STOP
-        self._count = self._count + 1 if unproductive else 0
+        if ctx.action is Action.STOP:
+            self._count += 1  # demoted vote: counts but cannot stop alone
+            return
+        if ctx.action in _NON_TRANSLATING:
+            return  # scanning in place is neutral, not a plateau
+        self._count = self._count + 1 if ctx.novelty < self.novelty_delta else 0
 
     def should_stop(self) -> bool:
         return self._count >= self.window
@@ -122,6 +146,7 @@ class StuckGuard:
     step: float
     window: int = 8
     min_displacement_factor: float = 0.5
+    reason: str = "stuck"
     _positions: list[np.ndarray] = field(default_factory=list)
     _triggered: bool = False
 
@@ -130,7 +155,7 @@ class StuckGuard:
         self._triggered = False
 
     def update(self, ctx: WalkContext) -> None:
-        if ctx.action in (Action.STOP, Action.DESCRIBE) or ctx.degenerate:
+        if ctx.action in (Action.STOP, Action.DESCRIBE, Action.MARK) or ctx.degenerate:
             return
         self._positions.append(ctx.pose.position.copy())
         if len(self._positions) > self.window:
@@ -150,6 +175,14 @@ def any_walk_stop(policies: list[StopPolicy]) -> bool:
     return any(p.should_stop() for p in policies)
 
 
+def walk_stop_reason(policies: list[StopPolicy]) -> str | None:
+    """The ``reason`` of the first firing walk policy, or ``None`` if none fired."""
+    for p in policies:
+        if p.should_stop():
+            return p.reason
+    return None
+
+
 @dataclass
 class SessionContext:
     """Snapshot handed to session-level stop policies after each walk."""
@@ -162,6 +195,8 @@ class SessionContext:
 
 @runtime_checkable
 class SessionStopPolicy(Protocol):
+    reason: str
+
     def should_stop(self, ctx: SessionContext) -> bool: ...
 
 
@@ -170,6 +205,7 @@ class PoseBudget:
     """Stop when the deliverable size is reached."""
 
     max_poses: int = 200
+    reason: str = "pose_budget"
 
     def __post_init__(self) -> None:
         if self.max_poses <= 0:
@@ -186,6 +222,7 @@ class CoverageTarget:
     radius: float
     tau: float = 0.8
     grid_cells: int = 64
+    reason: str = "coverage_target"
 
     def __post_init__(self) -> None:
         if not 0.0 < self.tau <= 1.0:
@@ -208,6 +245,7 @@ class QualityTarget:
     tau: float = 0.8
     q_min: float = 0.5
     grid_cells: int = 64
+    reason: str = "quality_target"
 
     def __post_init__(self) -> None:
         if not 0.0 < self.tau <= 1.0:
@@ -231,6 +269,8 @@ class QualityTarget:
 class SeedExhaustion:
     """Stop when all seeds have been launched."""
 
+    reason: str = "seeds_exhausted"
+
     def should_stop(self, ctx: SessionContext) -> bool:
         return ctx.walks_completed >= ctx.total_seeds
 
@@ -240,6 +280,7 @@ class DiminishingReturns:
     """Stop when the last seed batch added < ``epsilon`` coverage."""
 
     epsilon: float = 0.005
+    reason: str = "diminishing_returns"
 
     def __post_init__(self) -> None:
         if self.epsilon < 0:
@@ -252,3 +293,11 @@ class DiminishingReturns:
 def any_session_stop(policies: list[SessionStopPolicy], ctx: SessionContext) -> bool:
     """OR-composition for session-level policies."""
     return any(p.should_stop(ctx) for p in policies)
+
+
+def session_stop_reason(policies: list[SessionStopPolicy], ctx: SessionContext) -> str | None:
+    """The ``reason`` of the first firing session policy, or ``None`` if none fired."""
+    for p in policies:
+        if p.should_stop(ctx):
+            return p.reason
+    return None

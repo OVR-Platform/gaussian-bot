@@ -21,8 +21,14 @@ def test_action_verbs_match_adr() -> None:
         "move_up",
         "move_down",
         "describe",
+        "mark",
         "stop",
     }
+
+
+def test_mark_is_noop() -> None:
+    pose = Pose(position=np.array([1.0, 2.0, 3.0]))
+    assert apply_action(pose, Action.MARK, _SPACE) == pose
 
 
 def test_action_space_from_bounds_scales_with_diagonal() -> None:
@@ -63,6 +69,25 @@ def test_forward_stays_level_when_looking_up() -> None:
     assert looking_up.forward()[1] > 0.4  # genuinely pitched up toward +Y
     moved = apply_action(looking_up, Action.FORWARD, _SPACE, up_axis="y")
     assert abs(moved.position[1]) < 1e-9  # translation stays on floor plane
+
+
+def test_forward_capped_by_clearance() -> None:
+    pose = Pose(position=np.zeros(3))  # looks +Z
+    # clearance 0.6, margin = 0.5 * step(1.0) = 0.5 -> capped step 0.1
+    moved = apply_action(pose, Action.FORWARD, _SPACE, up_axis="y", clearance=0.6)
+    assert np.allclose(moved.position, [0.0, 0.0, 0.1])
+
+
+def test_forward_blocked_when_clearance_below_margin() -> None:
+    pose = Pose(position=np.zeros(3))
+    moved = apply_action(pose, Action.FORWARD, _SPACE, up_axis="y", clearance=0.3)
+    assert np.allclose(moved.position, [0.0, 0.0, 0.0])  # halts short of the wall
+
+
+def test_back_ignores_clearance() -> None:
+    pose = Pose(position=np.zeros(3))
+    moved = apply_action(pose, Action.BACK, _SPACE, up_axis="y", clearance=0.05)
+    assert np.allclose(moved.position, [0.0, 0.0, -1.0])  # rear clearance unknown
 
 
 def test_move_up_translates_along_up_axis() -> None:

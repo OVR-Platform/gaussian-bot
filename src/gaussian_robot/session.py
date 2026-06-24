@@ -3,6 +3,22 @@
 This is the single wiring point: it selects backends from the config (demo
 fakes now; a real Qwen vLLM client when enabled; a real gsplat renderer when it
 lands), builds the :class:`Explorer`, and spreads seed poses inside the scene.
+
+Seed lifecycle (the source of truth for "where do walks start?"):
+
+    capture poses / density grid / floor grid
+        │  generate_seed_candidates()  -> list[SeedPose] (tagged with `kind`)
+        ▼
+    candidate SeedPoses (spread + origin-facing fallbacks)
+        │  validate_seed_poses()       -> drops void/blurry views, keeps `kind`
+        ▼
+    seed poses  ──run_session()──▶  one Walk each (walk_id "walk{i}")
+                                     into a shared CoverageState
+
+A *seed* is the pose a walk starts from; a *walk* is the episode and is
+identified by ``walk_id`` (not "seed_id"). ``SeedPose.kind`` records provenance
+("capture" = a real reconstruction camera; otherwise a synthesised guess) so the
+UI can show whether a walk started from a real viewpoint or a fallback.
 """
 
 from __future__ import annotations
@@ -10,14 +26,16 @@ from __future__ import annotations
 import math
 import struct
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
 from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
 from gaussian_robot.config import RunConfig
-from gaussian_robot.metrics.coverage import CoverageState
+from gaussian_robot.filters.pose_filters import FilteredPose, filter_poses
+from gaussian_robot.metrics.coverage import CoverageState, PoseSample
 from gaussian_robot.nav.action import ActionSpace
-from gaussian_robot.nav.explorer import Explorer
+from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
 from gaussian_robot.nav.observation import ObservationBuilder
 from gaussian_robot.nav.stop import (
     BoundsGuard,
@@ -36,6 +54,10 @@ from gaussian_robot.splat.scene import SceneBounds, SplatScene
 from gaussian_robot.vlm.client import VLMClient
 
 _FLOOR_PLANE = {0: (1, 2), 1: (0, 2), 2: (0, 1)}
+
+# Fixed RNG seed for reproducible density-weighted candidate sampling. This is a
+# numpy PRNG seed — unrelated to the SeedPoses that walks start from.
+_RNG_SEED = 42
 
 
 def _floor_axes(up_axis: str) -> tuple[int, int]:
@@ -265,6 +287,130 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
     return {"frames": frames, "ok": True, "step_size": space.step, "n_steps": n_steps}
 
 
+def _rotation_geodesic(r0: np.ndarray, r1: np.ndarray, t: float) -> np.ndarray:
+    """Interpolate two world->camera rotations along the SO(3) geodesic (slerp).
+
+    Uses the same world-frame composition as ``apply_action`` (``R = Rw @ R0``):
+    the relative world rotation ``r1 @ r0.T`` is reduced to axis-angle and applied
+    by a fraction ``t``. Robust for the small per-step rotations a walk makes.
+    """
+    from gaussian_robot.nav.action import _rotation_about_axis  # noqa: PLC0415
+
+    rel = r1 @ r0.T
+    cos = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
+    theta = math.acos(cos)
+    if theta < 1e-6:
+        return r0.copy()
+    axis = np.array(
+        [rel[2, 1] - rel[1, 2], rel[0, 2] - rel[2, 0], rel[1, 0] - rel[0, 1]], dtype=np.float64
+    ) / (2.0 * math.sin(theta))
+    interpolated: np.ndarray = _rotation_about_axis(axis, t * theta) @ r0
+    return interpolated
+
+
+def interpolate_walk_poses(poses: list[Pose], per_segment: int) -> list[Pose]:
+    """Densify a walk trajectory: ``per_segment`` interpolated poses per checkpoint pair.
+
+    Consecutive identical checkpoints (a blocked/stop step that didn't move) add no
+    frames. Position is linearly interpolated; orientation slerped.
+    """
+    if len(poses) < 2 or per_segment < 1:
+        return list(poses)
+    out: list[Pose] = []
+    for a, b in zip(poses[:-1], poses[1:], strict=False):
+        same = bool(np.allclose(a.position, b.position) and np.allclose(a.rotation, b.rotation))
+        steps = 1 if same else per_segment
+        for k in range(steps):
+            t = k / per_segment
+            pos = a.position * (1 - t) + b.position * t
+            rot = a.rotation if same else _rotation_geodesic(a.rotation, b.rotation, t)
+            out.append(Pose(position=pos, rotation=rot))
+    out.append(poses[-1])
+    return out
+
+
+def _interp_pose(a: Pose, b: Pose, t: float) -> Pose:
+    """Pose between ``a`` and ``b``: linear position, slerped orientation."""
+    return Pose(
+        position=a.position * (1 - t) + b.position * t,
+        rotation=_rotation_geodesic(a.rotation, b.rotation, t),
+    )
+
+
+def _movie_frame_plan(
+    shots: list[dict[str, Any]], per_segment: int
+) -> tuple[list[Pose], list[str]]:
+    """Expand annotated shots into (poses, captions): glide into each shot, then hold on it.
+
+    A shot ``{"pose", "caption", "hold"}`` produces ``per_segment`` interpolated frames
+    of motion from the previous pose (captioned only on arrival), followed by ``hold``
+    repeated frames of the shot itself — so turns are seen as rotation and marks/describes
+    linger on screen with their caption.
+    """
+    poses: list[Pose] = []
+    captions: list[str] = []
+    prev: Pose = shots[0]["pose"]
+    for s in shots:
+        p: Pose = s["pose"]
+        cap = str(s.get("caption", ""))
+        moved = not (
+            np.allclose(prev.position, p.position) and np.allclose(prev.rotation, p.rotation)
+        )
+        if moved:
+            for k in range(1, per_segment + 1):
+                poses.append(_interp_pose(prev, p, k / per_segment))
+                captions.append(cap if k == per_segment else "")
+        for _ in range(max(1, int(s.get("hold", 1)))):
+            poses.append(p)
+            captions.append(cap)
+        prev = p
+    return poses, captions
+
+
+def render_walk_movie(
+    config: RunConfig,
+    shots: list[dict[str, Any]],
+    *,
+    per_segment: int = 8,
+    max_frames: int = 400,
+) -> dict[str, object]:
+    """Render a narrated fly-through of a walk from its annotated ``shots`` timeline.
+
+    Motion between checkpoints is interpolated (``per_segment`` frames, scaled down so
+    the total stays under ``max_frames``); each frame carries a caption, and mark/describe
+    shots hold for several frames so the viewer sees the decision. Returns parallel
+    ``frames`` (JPEG data URLs) and ``captions`` for the dashboard player.
+    """
+    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
+    from gaussian_robot.vlm.qwen import jpeg_data_url  # noqa: PLC0415
+
+    if not config.ply_path:
+        raise ValueError("no ply_path configured")
+    if not shots:
+        return {"ok": False, "error": "no frames for this walk yet", "frames": [], "captions": []}
+    renderer, _, _ = _load_renderer(config.ply_path, device=config.cuda_device)
+
+    segments = max(1, len(shots) - 1)
+    per = max(1, min(per_segment, max(1, max_frames // segments)))
+    poses, captions = _movie_frame_plan(shots, per)
+    if len(poses) > max_frames:  # long walk: subsample evenly (keeps caption alignment)
+        idx = np.linspace(0, len(poses) - 1, max_frames).astype(int)
+        poses = [poses[i] for i in idx]
+        captions = [captions[i] for i in idx]
+
+    frames = [
+        jpeg_data_url(renderer.render(Camera(pose=p, intrinsics=_PREVIEW_INTRINSICS)).rgb)
+        for p in poses
+    ]
+    return {
+        "ok": True,
+        "frames": frames,
+        "captions": captions,
+        "n_frames": len(frames),
+        "checkpoints": len(shots),
+    }
+
+
 def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
     """World->camera rotation (OpenCV) whose camera sits at ``origin`` looking at ``target``."""
     up = up_vector(up_axis)
@@ -335,7 +481,7 @@ def _positions_from_density(
 
     a, b = _floor_axes(up_axis)
 
-    rng = np.random.default_rng(seed=42)
+    rng = np.random.default_rng(_RNG_SEED)
     indices = rng.choice(len(probs), size=n, replace=True, p=probs)
     positions: list[np.ndarray] = []
     for idx in indices:
@@ -345,7 +491,7 @@ def _positions_from_density(
         pos = np.zeros(3)
         pos[a] = xa
         pos[b] = xb
-        # Height is filled in by generate_seeds using the validated origin height.
+        # Height is filled in by generate_seed_candidates using the validated origin height.
         positions.append(pos)
     return positions
 
@@ -370,7 +516,26 @@ def _spread_capture_poses(poses: list[Pose], up_axis: str, n: int) -> list[Pose]
     return [poses[i] for i in idx]
 
 
-def generate_seeds(
+def _origin_fallback_seeds(
+    safe_origin: np.ndarray, a: int, b: int, ua: str, n: int
+) -> list[SeedPose]:
+    """Synthesised seeds at the validated origin facing out in ``n`` directions."""
+    out: list[SeedPose] = []
+    for i in range(n):
+        angle = 2.0 * math.pi * i / n
+        target = safe_origin.copy()
+        target[a] += math.cos(angle)
+        target[b] += math.sin(angle)
+        out.append(
+            SeedPose(
+                pose=Pose(position=safe_origin.copy(), rotation=look_at(safe_origin, target, ua)),
+                kind="origin_fallback",
+            )
+        )
+    return out
+
+
+def generate_seed_candidates(
     config: RunConfig,
     bounds_min: np.ndarray | None = None,
     bounds_max: np.ndarray | None = None,
@@ -378,19 +543,19 @@ def generate_seeds(
     renderer: Renderer | None = None,
     capture_poses: list[Pose] | None = None,
     up_axis: str | None = None,
-) -> list[Pose]:
-    """Generate seed pose candidates spread across the scene floor.
+) -> list[SeedPose]:
+    """Generate candidate :class:`SeedPose`\\ s spread across the scene floor.
 
-    When ``capture_poses`` (the camera poses the splat was reconstructed from)
-    are available, they are used as the candidate pool: every one is a known-good
-    viewpoint that looks at real geometry, so seeds never land in empty space.
-    They are spread across the floor via farthest-point selection and keep their
-    original orientation.
+    Each candidate is tagged with its provenance (``SeedPose.kind``):
 
-    Otherwise, when a renderer with a density grid is available, seeds are sampled
-    from reconstructed regions; failing that, seeds are placed on a regular floor
-    grid. A set of candidates from the known-good ``origin`` (facing different
-    directions) is always appended as a fallback.
+    - ``capture`` — when ``capture_poses`` (the cameras the splat was
+      reconstructed from) are available, they are the candidate pool: every one
+      is a known-good viewpoint, spread via farthest-point selection, keeping its
+      original orientation.
+    - ``density`` / ``grid`` — otherwise candidates are sampled from the
+      reconstructed-density grid, or failing that placed on a regular floor grid.
+    - ``origin_fallback`` — a ring of origin-facing candidates is always appended
+      so validation still has options if the preferred candidates render poorly.
     """
     ua = up_axis if up_axis is not None else config.up_axis
     if ua == "auto":  # defensive: callers normally pass an already-resolved axis
@@ -404,111 +569,120 @@ def generate_seeds(
     # same elevation as a known-good camera position rather than mid-bounding-box.
     good_height = float(safe_origin[up_idx])
 
-    n_candidates = max(config.num_seeds * 3, 12)
+    # Over-sample candidates: after the sharpness floor drops the blurriest ~half,
+    # enough well-spread real views remain to pick num_seeds sharp ones from.
+    n_candidates = max(config.num_seeds * 6, 24)
+    n_origin = max(config.num_seeds, 4)
 
     if capture_poses:
-        candidates: list[Pose] = _spread_capture_poses(capture_poses, ua, n_candidates)
-        # Append origin-facing fallbacks so validation still has options if a
-        # capture pose renders poorly (e.g. a floater-only view).
-        n_origin = max(config.num_seeds, 4)
-        for i in range(n_origin):
-            angle = 2.0 * math.pi * i / n_origin
-            target = safe_origin.copy()
-            target[a] += math.cos(angle)
-            target[b] += math.sin(angle)
-            candidates.append(
-                Pose(
-                    position=safe_origin.copy(),
-                    rotation=look_at(safe_origin, target, ua),
-                )
-            )
+        candidates = [
+            SeedPose(pose=p, kind="capture")
+            for p in _spread_capture_poses(capture_poses, ua, n_candidates)
+        ]
+        candidates += _origin_fallback_seeds(safe_origin, a, b, ua, n_origin)
         return candidates
+
+    frontier_kind = "density"
     frontier: list[np.ndarray] | None = None
     if renderer is not None:
         frontier = _positions_from_density(renderer, ua, n_candidates)
     if frontier is None:
-        frontier = _floor_seed_positions(
-            bmin, bmax, ua, n_candidates, height=good_height
-        )
+        frontier = _floor_seed_positions(bmin, bmax, ua, n_candidates, height=good_height)
+        frontier_kind = "grid"
 
     # Stamp the validated height onto density-sampled positions (they have height=0).
     for pos in frontier:
         pos[up_idx] = good_height
 
     candidates = []
-    for pos in frontier:
-        angle = 2.0 * math.pi * len(candidates) / max(n_candidates, 1)
+    for j, pos in enumerate(frontier):
+        angle = 2.0 * math.pi * j / max(n_candidates, 1)
         target = pos.copy()
         target[a] += math.cos(angle)
         target[b] += math.sin(angle)
-        candidates.append(Pose(position=pos.copy(), rotation=look_at(pos, target, ua)))
-
-    # Always include origin-facing candidates as a fallback seed pool
-    n_origin = max(config.num_seeds, 4)
-    for i in range(n_origin):
-        angle = 2.0 * math.pi * i / n_origin
-        target = safe_origin.copy()
-        target[a] += math.cos(angle)
-        target[b] += math.sin(angle)
         candidates.append(
-            Pose(position=safe_origin.copy(), rotation=look_at(safe_origin, target, ua))
+            SeedPose(
+                pose=Pose(position=pos.copy(), rotation=look_at(pos, target, ua)),
+                kind=frontier_kind,
+            )
         )
 
+    candidates += _origin_fallback_seeds(safe_origin, a, b, ua, n_origin)
     return candidates
 
 
-def _select_seeds(
+def _sharpness(rgb: np.ndarray) -> float:
+    """High-frequency content of a render (mean squared image gradient).
+
+    Crisp, well-reconstructed views score high; blurry/smeared regions where the
+    splat lacks training views score low. Cheap, dependency-free, and scale-free
+    enough to compare candidate seed views of the same scene.
+    """
+    g = rgb.astype(np.float64).mean(axis=2)
+    gx = np.diff(g, axis=1)
+    gy = np.diff(g, axis=0)
+    return float((gx * gx).mean() + (gy * gy).mean())
+
+
+def validate_seed_poses(
     renderer: Renderer,
-    candidates: list[Pose],
+    candidates: list[SeedPose],
     *,
     num_seeds: int,
     step: float,
     strict: bool,
-) -> list[Pose]:
-    """Keep the best valid ``num_seeds`` candidates.
+) -> list[SeedPose]:
+    """Keep the best valid ``num_seeds`` candidates (preserving their ``kind``).
 
     A candidate is rejected when it looks into the void (mostly-infinite depth or
     near-zero alpha). When ``strict`` (guessed density/grid seeds), candidates are
     re-ranked by render quality (median depth x alpha) so the best guesses are
     tried first, and an extra median-depth floor rejects views buried in geometry.
 
-    When not ``strict`` (capture-pose seeds), the incoming order is preserved:
-    the candidates are already real, known-good viewpoints spread across the floor
-    by farthest-point selection, so re-ranking by depth would only collapse that
-    spatial diversity toward whichever view happens to see furthest.
+    When not ``strict`` (capture-pose seeds), the incoming farthest-point order is
+    preserved for spatial diversity, but views whose sharpness is below the median
+    of the candidate pool are skipped — so a real but blurry/under-reconstructed
+    capture view doesn't become a seed while sharper, equally-spread ones exist.
     """
     from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
     intrinsics = _PREVIEW_INTRINSICS
 
-    def _score(pose: Pose) -> float:
-        r = renderer.render(Camera(pose=pose, intrinsics=intrinsics))
+    # Render every candidate once and cache its metrics (avoids double-rendering).
+    scored: list[tuple[SeedPose, float, float, float, float]] = []
+    for s in candidates:
+        r = renderer.render(Camera(pose=s.pose, intrinsics=intrinsics))
         if r.depth is None:
-            return -1.0
-        finite = r.depth[np.isfinite(r.depth)]
-        med = float(np.median(finite)) if finite.size > 0 else 0.0
-        alpha = float(r.alpha.mean()) if r.alpha is not None else 0.5
-        return med * alpha
+            scored.append((s, 0.0, 0.0, 0.0, 0.0))
+            continue
+        finite_mask = np.isfinite(r.depth)
+        finite_frac = float(finite_mask.mean())
+        near = r.depth[finite_mask]
+        median_depth = float(np.median(near)) if near.size > 0 else 0.0
+        alpha_mean = float(r.alpha.mean()) if r.alpha is not None else 1.0
+        sharp = _sharpness(r.rgb)
+        scored.append((s, finite_frac, median_depth, alpha_mean, sharp))
 
-    ordered = sorted(candidates, key=_score, reverse=True) if strict else candidates
+    if strict:
+        ordered = sorted(scored, key=lambda it: it[2] * it[3], reverse=True)
+        sharp_floor = 0.0
+    else:
+        ordered = scored  # preserve farthest-point spread
+        valid_sharps = [sh for (_, ff, _, a, sh) in scored if ff >= 0.5 and a >= 0.15]
+        sharp_floor = float(np.median(valid_sharps)) if valid_sharps else 0.0
 
-    seeds: list[Pose] = []
-    for s in ordered:
+    seeds: list[SeedPose] = []
+    for s, finite_frac, median_depth, alpha_mean, sharp in ordered:
         if len(seeds) >= num_seeds:
             break
-        result = renderer.render(Camera(pose=s, intrinsics=intrinsics))
-        if result.depth is None:
-            continue
-        finite_frac = float(np.isfinite(result.depth).mean())
-        near = result.depth[np.isfinite(result.depth)]
-        median_depth = float(np.median(near)) if near.size > 0 else 0.0
-        alpha_mean = float(result.alpha.mean()) if result.alpha is not None else 1.0
         if finite_frac < 0.5 or alpha_mean < 0.15:
             continue
         if strict and median_depth < step:
             continue
+        if not strict and sharp < sharp_floor:
+            continue  # skip the blurriest real views; a sharper spread one remains
         seeds.append(s)
-    return seeds or [ordered[0]]
+    return seeds or [ordered[0][0]]
 
 
 def build_vlm(config: RunConfig) -> VLMClient:
@@ -531,7 +705,32 @@ def build_vlm(config: RunConfig) -> VLMClient:
     return ScriptedDemoVLM()
 
 
-def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageState]:
+def assemble_deliverable(
+    results: list[WalkResult],
+    *,
+    up_axis: str,
+    r_keep: float,
+    budget: int,
+    min_confidence: float = 0.0,
+) -> list[FilteredPose]:
+    """Build the deliverable pose set (ADR-0008), preferring VLM-marked viewpoints.
+
+    The deliverable is the set of *new* camera poses to densify the splat. When the
+    VLM has marked fill-in viewpoints (``WalkResult.marks``), those are the primary
+    source — the agent has explicitly proposed them. Only when no poses were marked
+    do we fall back to the union of all visited trajectory poses. Either way the
+    chosen poses pass the standard quality/novelty/budget filter.
+    """
+    marks = [PoseSample(pose=p, walk_id=r.walk_id) for r in results for p in r.marks]
+    samples = marks or [
+        PoseSample(pose=s.pose, walk_id=r.walk_id) for r in results for s in r.steps
+    ]
+    return filter_poses(
+        samples, up_axis=up_axis, r_keep=r_keep, budget=budget, min_confidence=min_confidence
+    )
+
+
+def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], CoverageState]:
     """Construct an :class:`Explorer`, seeds and a fresh coverage state from config.
 
     The renderer is always the demo fake for now (gsplat is not yet wired); the
@@ -568,16 +767,22 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
             device=config.cuda_device,
         )
 
+    # Default the map to a local window (~10 steps across) so motion is visible;
+    # the whole-scene view made every step an invisible sub-pixel nudge.
+    map_span = config.map_span if config.map_span is not None else space.step * 10.0
     builder = ObservationBuilder(
         renderer=renderer,
         up_axis=up_axis,
         map_size=config.map_size,
+        map_span=map_span,
         task=config.task_prompt,
         depth_estimator=depth_estimator,
     )
 
     walk_policies: list[StopPolicy] = [
-        CoveragePlateau(novelty_delta=space.step, window=5),
+        # window=8: tolerate a longer unproductive stretch before ending a walk,
+        # so deliberate fine-grained exploration isn't cut short prematurely.
+        CoveragePlateau(novelty_delta=space.step, window=8),
         BoundsGuard(),
         StuckGuard(step=space.step),
     ]
@@ -597,17 +802,23 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[Pose], CoverageStat
         walk_policies=walk_policies,
         session_policies=session_policies,
         max_steps=config.max_steps,
+        mark_target=config.pose_target,
     )
     seed_origin = _best_origin(renderer, up_axis, bmin, bmax)
 
     seed_pool = capture_poses if config.use_capture_pose_seeds else []
-    candidates = generate_seeds(
-        config, bmin, bmax, origin=seed_origin, renderer=renderer, capture_poses=seed_pool,
+    candidates = generate_seed_candidates(
+        config,
+        bmin,
+        bmax,
+        origin=seed_origin,
+        renderer=renderer,
+        capture_poses=seed_pool,
         up_axis=up_axis,
     )
     # Capture poses are known-good viewpoints, so validation can be lenient (see
-    # _select_seeds); guessed density/grid candidates need the strict checks.
-    seeds = _select_seeds(
+    # validate_seed_poses); guessed density/grid candidates need the strict checks.
+    seeds = validate_seed_poses(
         renderer, candidates, num_seeds=config.num_seeds, step=space.step, strict=not seed_pool
     )
 

@@ -7,12 +7,20 @@ import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 from pydantic import ValidationError
 
 from gaussian_robot.config import load_config, save_config
-from gaussian_robot.events import SessionEvent, StepEvent
-from gaussian_robot.session import animate_forward, build_session, load_preview
+from gaussian_robot.events import (
+    MarkEvent,
+    SceneDescribeEvent,
+    SessionEvent,
+    SessionStartEvent,
+    StepEvent,
+)
+from gaussian_robot.render.camera import Pose
+from gaussian_robot.session import animate_forward, build_session, load_preview, render_walk_movie
 from gaussian_robot.ui.page import PAGE_HTML
 from gaussian_robot.ui.serialize import event_to_message
 from gaussian_robot.vlm.server import VLLMServerProcess, VLLMStatus
@@ -20,6 +28,58 @@ from gaussian_robot.vlm.server import VLLMServerProcess, VLLMStatus
 _VLLM = VLLMServerProcess()
 _step_gate = threading.Event()
 _step_mode = False
+
+# Per-walk annotated timeline captured live from the event stream: each "shot" is a
+# pose plus a caption and a hold (frames to linger), so the dashboard can replay an
+# interpolated fly-through that narrates turns/describes and pauses on marks.
+_WALKS: dict[str, list[dict[str, Any]]] = {}
+_LAST_POSE: dict[str, Pose] = {}  # most recent stepped pose per walk (for mark/describe shots)
+_PENDING_DESC: dict[str, str] = {}  # a describe emitted before the first step
+
+_ACTION_LABEL = {
+    "forward": "▶ forward",
+    "back": "◀ back",
+    "turn_left": "↶ turn left",
+    "turn_right": "↷ turn right",
+    "look_up": "look up",
+    "look_down": "look down",
+    "move_up": "move up",
+    "move_down": "move down",
+}
+
+
+def _capture_event(event: SessionEvent) -> None:
+    """Accumulate the annotated per-walk timeline used by the replay movie."""
+    if isinstance(event, SessionStartEvent):
+        _WALKS.clear()
+        _LAST_POSE.clear()
+        _PENDING_DESC.clear()
+    elif isinstance(event, StepEvent):
+        label = _ACTION_LABEL.get(event.action.value, event.action.value)
+        if event.blocked:
+            label += " — blocked"
+        pending = _PENDING_DESC.pop(event.walk_id, "")
+        caption = f"DESCRIBE: {pending}\n{label}" if pending else label
+        hold = 16 if pending else 1
+        _WALKS.setdefault(event.walk_id, []).append(
+            {"pose": event.pose, "caption": caption, "hold": hold}
+        )
+        _LAST_POSE[event.walk_id] = event.pose
+    elif isinstance(event, MarkEvent):
+        pose = _LAST_POSE.get(event.walk_id)
+        if pose is not None:
+            _WALKS.setdefault(event.walk_id, []).append(
+                {"pose": pose, "caption": "★ MARK — fill-in pose", "hold": 14}
+            )
+    elif isinstance(event, SceneDescribeEvent):
+        text = event.description[:200]
+        pose = _LAST_POSE.get(event.walk_id)
+        if pose is None:
+            _PENDING_DESC[event.walk_id] = text
+        else:
+            _WALKS.setdefault(event.walk_id, []).append(
+                {"pose": pose, "caption": f"DESCRIBE: {text}", "hold": 18}
+            )
 
 
 def serve_dashboard(host: str, port: int, *, start_vllm: bool = False) -> None:
@@ -52,25 +112,46 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def do_GET(self) -> None:  # noqa: N802
-        if self.path == "/":
-            self._send_bytes(PAGE_HTML.encode(), "text/html; charset=utf-8")
-            return
-        if self.path == "/api/config":
-            self._send_json(load_config().model_dump(mode="json"))
-            return
-        if self.path == "/api/vllm/status":
-            self._send_json(_status_payload(_VLLM.status(load_config())))
-            return
-        if self.path == "/api/load":
-            self._load_scene()
-            return
-        if self.path == "/api/animate-forward":
-            self._animate_forward()
-            return
-        if self.path in ("/api/run", "/api/run/stepping"):
+        routes = {
+            "/": lambda: self._send_bytes(PAGE_HTML.encode(), "text/html; charset=utf-8"),
+            "/api/config": lambda: self._send_json(load_config().model_dump(mode="json")),
+            "/api/vllm/status": lambda: self._send_json(
+                _status_payload(_VLLM.status(load_config()))
+            ),
+            "/api/load": self._load_scene,
+            "/api/animate-forward": self._animate_forward,
+            "/api/walks": self._list_walks,
+        }
+        path = urlparse(self.path).path
+        handler = routes.get(path)
+        if handler is not None:
+            handler()
+        elif path == "/api/walk-movie":
+            self._walk_movie(parse_qs(urlparse(self.path).query))
+        elif self.path in ("/api/run", "/api/run/stepping"):
             self._stream_run(step_mode=(self.path == "/api/run/stepping"))
+        else:
+            self.send_error(HTTPStatus.NOT_FOUND)
+
+    def _list_walks(self) -> None:
+        self._send_json({"walks": [{"walk_id": w, "frames": len(p)} for w, p in _WALKS.items()]})
+
+    def _walk_movie(self, query: dict[str, list[str]]) -> None:
+        walk_id = (query.get("walk") or [""])[0]
+        shots = _WALKS.get(walk_id)
+        if not shots:
+            self._send_json(
+                {"ok": False, "error": f"no frames recorded for {walk_id!r}", "frames": []},
+                status=HTTPStatus.NOT_FOUND,
+            )
             return
-        self.send_error(HTTPStatus.NOT_FOUND)
+        try:
+            per = int((query.get("per") or ["8"])[0])
+            result = render_walk_movie(load_config(), shots, per_segment=max(1, per))
+            result["walk_id"] = walk_id
+            self._send_json(result)
+        except Exception as exc:  # noqa: BLE001
+            self._send_json({"ok": False, "error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
 
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/api/step/next":
@@ -127,6 +208,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         def emit(event: SessionEvent) -> None:
+            _capture_event(event)  # build the annotated timeline for walk replay
             self._write_sse(event_to_message(event))
             if _step_mode and isinstance(event, StepEvent):
                 _step_gate.clear()
@@ -140,7 +222,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             explorer.event_sink = emit
             if step_mode:
                 _step_gate.set()
-            explorer.run_session(seeds, coverage)
+            explorer.run_session(seeds, coverage, requested_seeds=config.num_seeds)
         except BrokenPipeError:
             return
         except Exception as exc:  # noqa: BLE001
