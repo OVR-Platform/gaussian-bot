@@ -106,10 +106,13 @@ class RunConfig(BaseModel):
         "non-flat scenes (uses a one-time gaussian height field). Disable for flat scenes.",
     )
     live_tween_frames: int = Field(
-        default=6,
+        default=0,
         ge=0,
         description="Interpolated RGB frames rendered between views to smooth the live "
-        "dashboard motion. 0 disables. Each frame is an extra render per step.",
+        "dashboard motion. 0 disables (default: each frame is an extra GPU render per step, "
+        "the biggest per-step cost after the VLM). The on-demand walk-replay fly-through "
+        "interpolates independently, so smoothing is kept where it matters. Raise for a "
+        "smoother live view at the cost of speed.",
     )
     map_size: int = Field(default=512, ge=64)
     map_span: float | None = Field(
