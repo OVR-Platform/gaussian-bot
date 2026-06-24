@@ -241,18 +241,17 @@ class Explorer:
     def _maybe_auto_mark(
         self, robot: Robot, result: WalkResult, *, walk_id: str, step: int
     ) -> None:
-        """Auto-mark the current pose when it is close to and roughly facing a frontier.
+        """Auto-mark the current pose when it sits *in* an under-sampled region.
 
-        Guarantees the deliverable gets populated from the frontier signal even when the
-        VLM never emits MARK. Dedupes against existing marks by the coverage radius.
+        Marks by location, not by facing: if the nearest reconstruction frontier is within
+        a coverage radius (the robot is standing in/at a gap), record this viewpoint.
+        Guarantees the deliverable populates as the robot traverses under-covered areas,
+        even when the VLM never emits MARK. Dedupes against existing marks (in _record_mark).
         """
         if not self.auto_mark:
             return
         gap = self.observation_builder.nearest_gap(robot.pose)
-        if gap is None:
-            return
-        dist, bearing = gap
-        if dist > self.coverage_radius * 1.5 or abs(bearing) > 45.0:
+        if gap is None or gap[0] > self.coverage_radius:
             return
         self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=True)
 
