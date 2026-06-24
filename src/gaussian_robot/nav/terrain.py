@@ -46,28 +46,30 @@ def aerial_target(
     up_axis: str,
     *,
     top_q: float = 0.9,
-    margin_frac: float = 0.1,
+    margin_frac: float = 0.2,
 ) -> tuple[np.ndarray, float] | None:
     """A vantage over the tallest geometry to survey from above, or None if ~flat.
 
     Returns ``((x, z), survey_height)`` where ``(x, z)`` is the floor-plane centroid of
     the tallest gaussians (the ``top_q`` height quantile — roofs/canopy/upper structure)
-    and ``survey_height`` is the signed up-coordinate a bit above the highest geometry.
-    The robot can fly there and look down to cover tops that ground-level walks miss.
+    and ``survey_height`` is the signed up-coordinate a bit above the roof level.
+
+    Heights use **robust percentiles** (97th for the roof, 3rd for the ground) so a stray
+    floater far above the scene doesn't blow the survey altitude up to the AABB ceiling.
     """
     if means.shape[0] == 0:
         return None
-    up = up_vector(up_axis)
-    heights = means @ up
-    h_min, h_max = float(heights.min()), float(heights.max())
-    vext = h_max - h_min
-    if vext < 1e-6:
+    heights = means @ up_vector(up_axis)
+    roof = float(np.quantile(heights, 0.97))  # robust top, ignores extreme floaters
+    ground = float(np.quantile(heights, 0.03))
+    span = roof - ground
+    if span < 1e-6:
         return None  # flat scene: nothing to survey from above
     tall = means[heights >= float(np.quantile(heights, top_q))]
     if tall.shape[0] == 0:
         return None
     xz = np.array([float(tall[:, 0].mean()), float(tall[:, 2].mean())], dtype=np.float64)
-    return xz, h_max + margin_frac * vext
+    return xz, roof + margin_frac * span
 
 
 def build_height_field(
