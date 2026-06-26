@@ -3,321 +3,150 @@
  "up_axis": "-y",
  "schema_version": 1,
  "provenance": {
-  "perception": "probe_v3_sam_openvocab",
-  "note": "SAM masks + open-vocab VLM labels, multi-view fused; stable (>=2 views) instances"
+  "perception": "probe_v4_annotate_photos (real mapping images)"
  },
  "objects": [
   {
    "id": "obj_00",
-   "label": "banner stand",
-   "surface": "solid",
+   "label": "white column",
+   "object_class": "landmark",
+   "manipulable": false,
    "center": [
-    3.02,
-    -1.1,
-    4.27
+    -1.29,
+    -1.46,
+    0.43
    ]
   },
   {
    "id": "obj_01",
-   "label": "glass door",
-   "surface": "glass",
+   "label": "Banner",
+   "object_class": "object",
+   "manipulable": false,
    "center": [
-    -0.35,
-    -1.17,
-    4.21
+    3.02,
+    -1.21,
+    4.48
    ]
   },
   {
    "id": "obj_02",
-   "label": "tiled floor",
-   "surface": "solid",
+   "label": "door",
+   "object_class": "landmark",
+   "manipulable": false,
    "center": [
-    5.18,
-    0.21,
-    -2.2
+    4.51,
+    -1.37,
+    -0.35
    ]
   },
   {
    "id": "obj_03",
-   "label": "office wall",
-   "surface": "solid",
+   "label": "gray wall surface",
+   "object_class": "surface",
+   "manipulable": false,
    "center": [
-    -1.27,
-    -1.45,
-    0.45
+    -2.03,
+    -2.79,
+    0.71
    ]
   },
   {
    "id": "obj_04",
-   "label": "floor carpet (moquette)",
-   "surface": "solid",
-   "center": [
-    3.09,
-    -0.09,
-    -2.79
-   ],
-   "surface_type": "floor",
+   "label": "ceiling tiles",
+   "object_class": "surface",
    "manipulable": false,
-   "note": "user correction: covers the whole office floor; not a discrete object"
+   "center": [
+    -1.1,
+    -2.9,
+    1.12
+   ]
   },
   {
    "id": "obj_05",
-   "label": "structural column",
-   "surface": "solid",
+   "label": "frosted glass door",
+   "object_class": "landmark",
+   "manipulable": false,
    "center": [
-    7.16,
-    -1.36,
-    -0.26
+    3.8,
+    -1.02,
+    1.51
    ]
   },
   {
    "id": "obj_06",
-   "label": "wooden door",
-   "surface": "solid",
+   "label": "ceiling tile",
+   "object_class": "surface",
+   "manipulable": false,
    "center": [
-    5.53,
-    -1.03,
-    -4.46
+    -1.67,
+    -2.81,
+    -1.41
    ]
   },
   {
    "id": "obj_07",
-   "label": "wooden door",
-   "surface": "solid",
+   "label": "ceiling tiles",
+   "object_class": "surface",
+   "manipulable": false,
    "center": [
-    1.08,
-    -1.02,
-    -4.69
+    -1.78,
+    -2.79,
+    -2.03
    ]
   },
   {
    "id": "obj_08",
-   "label": "office desk surface",
-   "surface": "solid",
+   "label": "wooden door",
+   "object_class": "landmark",
+   "manipulable": false,
    "center": [
-    -0.06,
-    -0.54,
-    0.51
-   ]
-  },
-  {
-   "id": "obj_09",
-   "label": "office desk leg",
-   "surface": "solid",
-   "center": [
-    -0.71,
-    -0.37,
-    0.91
-   ]
-  },
-  {
-   "id": "obj_10",
-   "label": "electrical panel box",
-   "surface": "solid",
-   "center": [
-    3.76,
-    -1.44,
-    0.42
-   ]
-  },
-  {
-   "id": "obj_11",
-   "label": "glass office door",
-   "surface": "glass",
-   "center": [
-    -1.55,
-    -1.49,
-    4.02
-   ]
-  },
-  {
-   "id": "obj_12",
-   "label": "office window",
-   "surface": "glass",
-   "center": [
-    3.7,
-    -1.21,
-    2.65
-   ]
-  },
-  {
-   "id": "obj_13",
-   "label": "staircase",
-   "surface": "solid",
-   "center": [
-    9.42,
-    -1.7,
-    -2.48
-   ]
-  },
-  {
-   "id": "obj_14",
-   "label": "office door",
-   "surface": "glass",
-   "center": [
-    3.86,
-    -1.01,
-    1.34
-   ]
-  },
-  {
-   "id": "obj_15",
-   "label": "vertical blinds",
-   "surface": "solid",
-   "center": [
-    0.46,
-    -1.28,
-    4.33
-   ]
-  },
-  {
-   "id": "obj_16",
-   "label": "office window",
-   "surface": "glass",
-   "center": [
-    5.34,
-    -2.77,
-    1.28
-   ]
-  },
-  {
-   "id": "obj_17",
-   "label": "ceiling tile",
-   "surface": "solid",
-   "center": [
-    0.45,
-    -2.85,
-    1.26
-   ]
-  },
-  {
-   "id": "obj_18",
-   "label": "glass door",
-   "surface": "glass",
-   "center": [
-    2.64,
-    -1.48,
-    4.83
-   ]
-  },
-  {
-   "id": "obj_19",
-   "label": "office glass partition",
-   "surface": "glass",
-   "center": [
-    4.4,
-    -2.68,
-    6.32
-   ]
-  },
-  {
-   "id": "obj_20",
-   "label": "ventilation grille",
-   "surface": "solid",
-   "center": [
-    -2.27,
-    -2.82,
-    -0.78
-   ]
-  },
-  {
-   "id": "obj_21",
-   "label": "ceiling light fixture",
-   "surface": "reflective",
-   "center": [
-    3.03,
-    -2.83,
-    -1.98
-   ]
-  },
-  {
-   "id": "obj_22",
-   "label": "flat screen monitor",
-   "surface": "reflective",
-   "center": [
-    4.21,
-    -1.52,
+    1.09,
+    -0.93,
     -4.68
    ]
   },
   {
-   "id": "obj_23",
-   "label": "cabinet door",
-   "surface": "solid",
+   "id": "obj_09",
+   "label": "ventilation grille",
+   "object_class": "object",
+   "manipulable": false,
    "center": [
-    3.7,
-    -0.18,
-    -4.08
-   ]
-  },
-  {
-   "id": "obj_24",
-   "label": "staircase with railing",
-   "surface": "solid",
-   "center": [
-    9.74,
-    -2.0,
-    -3.98
-   ]
-  },
-  {
-   "id": "obj_25",
-   "label": "office cabinet",
-   "surface": "solid",
-   "center": [
-    2.33,
-    -0.2,
-    -4.1
-   ]
-  },
-  {
-   "id": "obj_26",
-   "label": "office wall banner",
-   "surface": "reflective",
-   "center": [
-    5.84,
-    -1.51,
-    -0.25
-   ]
-  },
-  {
-   "id": "obj_27",
-   "label": "office door frame",
-   "surface": "solid",
-   "center": [
-    6.27,
-    -2.82,
+    -2.24,
+    -2.85,
     -1.0
    ]
   },
   {
-   "id": "obj_28",
-   "label": "office door",
-   "surface": "solid",
+   "id": "obj_10",
+   "label": "wooden door",
+   "object_class": "landmark",
+   "manipulable": false,
    "center": [
-    9.25,
-    -0.86,
-    0.23
+    5.55,
+    -0.91,
+    -4.5
    ]
   },
   {
-   "id": "obj_29",
-   "label": "emergency exit sign",
-   "surface": "reflective",
+   "id": "obj_11",
+   "label": "ceiling",
+   "object_class": "surface",
+   "manipulable": false,
    "center": [
-    0.01,
-    -2.74,
-    0.37
+    8.94,
+    -3.15,
+    -2.35
    ]
   },
   {
-   "id": "obj_30",
-   "label": "office desk surface",
-   "surface": "solid",
+   "id": "obj_12",
+   "label": "door mat",
+   "object_class": "surface",
+   "manipulable": false,
    "center": [
-    0.15,
-    -0.49,
-    -4.66
+    8.7,
+    0.09,
+    -0.11
    ]
   }
  ]

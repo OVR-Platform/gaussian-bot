@@ -6,51 +6,7 @@
    "task_id": "ufficio360/t00",
    "scene_id": "ufficio360",
    "type": "goto",
-   "instruction": "Navigate to the emergency exit sign.",
-   "target": "obj_29",
-   "destination": null,
-   "goal_predicates": [
-    {
-     "pred": "at",
-     "args": [
-      "agent",
-      "obj_29"
-     ]
-    }
-   ],
-   "feasibility": {
-    "target_exists": true,
-    "destination_exists": true
-   }
-  },
-  {
-   "task_id": "ufficio360/t01",
-   "scene_id": "ufficio360",
-   "type": "goto",
-   "instruction": "Go to the blue mat on the floor.",
-   "target": "obj_04",
-   "destination": null,
-   "goal_predicates": [
-    {
-     "pred": "at",
-     "args": [
-      "agent",
-      "obj_04"
-     ]
-    }
-   ],
-   "feasibility": {
-    "target_exists": true,
-    "destination_exists": true
-   },
-   "valid": false,
-   "invalid_reason": "target/dest is a floor surface, not an object"
-  },
-  {
-   "task_id": "ufficio360/t02",
-   "scene_id": "ufficio360",
-   "type": "goto",
-   "instruction": "Move to the office desk surface located at the front.",
+   "instruction": "Go to the wooden door.",
    "target": "obj_08",
    "destination": null,
    "goal_predicates": [
@@ -68,157 +24,15 @@
    }
   },
   {
-   "task_id": "ufficio360/t03",
-   "scene_id": "ufficio360",
-   "type": "find",
-   "instruction": "Locate the glass door near the window blinds.",
-   "target": "obj_01",
-   "destination": null,
-   "goal_predicates": [
-    {
-     "pred": "seen",
-     "args": [
-      "agent",
-      "obj_01"
-     ]
-    }
-   ],
-   "feasibility": {
-    "target_exists": true,
-    "destination_exists": true
-   }
-  },
-  {
-   "task_id": "ufficio360/t04",
-   "scene_id": "ufficio360",
-   "type": "find",
-   "instruction": "Find the office wall banner.",
-   "target": "obj_26",
-   "destination": null,
-   "goal_predicates": [
-    {
-     "pred": "seen",
-     "args": [
-      "agent",
-      "obj_26"
-     ]
-    }
-   ],
-   "feasibility": {
-    "target_exists": true,
-    "destination_exists": true
-   }
-  },
-  {
-   "task_id": "ufficio360/t05",
-   "scene_id": "ufficio360",
-   "type": "fetch_carry",
-   "instruction": "Pick up the blue mat and bring it to the office desk surface.",
-   "target": "obj_04",
-   "destination": "obj_08",
-   "goal_predicates": [
-    {
-     "pred": "holding",
-     "args": [
-      "agent",
-      "obj_04"
-     ]
-    },
-    {
-     "pred": "at",
-     "args": [
-      "obj_04",
-      "obj_08"
-     ]
-    }
-   ],
-   "feasibility": {
-    "target_exists": true,
-    "destination_exists": true
-   },
-   "valid": false,
-   "invalid_reason": "target/dest is a floor surface, not an object"
-  },
-  {
-   "task_id": "ufficio360/t06",
-   "scene_id": "ufficio360",
-   "type": "fetch_carry",
-   "instruction": "Retrieve the banner stand and place it on the other office desk surface.",
-   "target": "obj_00",
-   "destination": "obj_30",
-   "goal_predicates": [
-    {
-     "pred": "holding",
-     "args": [
-      "agent",
-      "obj_00"
-     ]
-    },
-    {
-     "pred": "at",
-     "args": [
-      "obj_00",
-      "obj_30"
-     ]
-    }
-   ],
-   "feasibility": {
-    "target_exists": true,
-    "destination_exists": true
-   }
-  },
-  {
-   "task_id": "ufficio360/t07",
+   "task_id": "ufficio360/t01",
    "scene_id": "ufficio360",
    "type": "goto",
-   "instruction": "Go to the cabinet door.",
-   "target": "obj_23",
-   "destination": null,
-   "goal_predicates": [
-    {
-     "pred": "at",
-     "args": [
-      "agent",
-      "obj_23"
-     ]
-    }
-   ],
-   "feasibility": {
-    "target_exists": true,
-    "destination_exists": true
-   }
-  },
-  {
-   "task_id": "ufficio360/t08",
-   "scene_id": "ufficio360",
-   "type": "goto",
-   "instruction": "Navigate to the office window.",
-   "target": "obj_12",
-   "destination": null,
-   "goal_predicates": [
-    {
-     "pred": "at",
-     "args": [
-      "agent",
-      "obj_12"
-     ]
-    }
-   ],
-   "feasibility": {
-    "target_exists": true,
-    "destination_exists": true
-   }
-  },
-  {
-   "task_id": "ufficio360/t09",
-   "scene_id": "ufficio360",
-   "type": "find",
-   "instruction": "Locate the structural column.",
+   "instruction": "Go to the frosted glass door.",
    "target": "obj_05",
    "destination": null,
    "goal_predicates": [
     {
-     "pred": "seen",
+     "pred": "at",
      "args": [
       "agent",
       "obj_05"
@@ -231,18 +45,18 @@
    }
   },
   {
-   "task_id": "ufficio360/t10",
+   "task_id": "ufficio360/t02",
    "scene_id": "ufficio360",
    "type": "goto",
-   "instruction": "Go to the wooden door.",
-   "target": "obj_06",
+   "instruction": "Go to the banner.",
+   "target": "obj_01",
    "destination": null,
    "goal_predicates": [
     {
      "pred": "at",
      "args": [
       "agent",
-      "obj_06"
+      "obj_01"
      ]
     }
    ],
@@ -252,25 +66,60 @@
    }
   },
   {
-   "task_id": "ufficio360/t11",
+   "task_id": "ufficio360/t03",
    "scene_id": "ufficio360",
-   "type": "fetch_carry",
-   "instruction": "Pick up the banner stand and bring it to the office wall banner.",
+   "type": "find",
+   "instruction": "Find the white column.",
    "target": "obj_00",
-   "destination": "obj_26",
+   "destination": null,
    "goal_predicates": [
     {
-     "pred": "holding",
+     "pred": "seen",
      "args": [
       "agent",
       "obj_00"
      ]
-    },
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t04",
+   "scene_id": "ufficio360",
+   "type": "find",
+   "instruction": "Find the ventilation grille.",
+   "target": "obj_09",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "seen",
+     "args": [
+      "agent",
+      "obj_09"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t05",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the wooden door at the far end.",
+   "target": "obj_10",
+   "destination": null,
+   "goal_predicates": [
     {
      "pred": "at",
      "args": [
-      "obj_00",
-      "obj_26"
+      "agent",
+      "obj_10"
      ]
     }
    ],
