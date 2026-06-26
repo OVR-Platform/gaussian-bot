@@ -64,13 +64,13 @@
    "task_id": "ufficio360/t05",
    "type": "fetch_carry",
    "instruction": "Pick up the blue mat and bring it to the office desk surface.",
-   "success": false,
-   "gcs": 0.0,
-   "stop_reason": "step_budget",
-   "steps": 81,
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "task_complete",
+   "steps": 141,
    "errors_m": [
-    5.96,
-    Infinity
+    0.62,
+    0.57
    ]
   },
   {
@@ -82,8 +82,8 @@
    "stop_reason": "bounds",
    "steps": 15,
    "errors_m": [
-    Infinity,
-    Infinity
+    "inf",
+    "inf"
    ]
   },
   {
@@ -143,8 +143,8 @@
    "stop_reason": "bounds",
    "steps": 14,
    "errors_m": [
-    Infinity,
-    Infinity
+    "inf",
+    "inf"
    ]
   }
  ]
