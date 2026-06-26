@@ -33,10 +33,17 @@ import numpy as np
 from gaussian_robot.backends.demo import FakeRenderer, ScriptedDemoVLM
 from gaussian_robot.config import RunConfig
 from gaussian_robot.filters.pose_filters import FilteredPose, filter_poses
-from gaussian_robot.metrics.coverage import CoverageState, PoseSample
-from gaussian_robot.nav.action import ActionSpace
+from gaussian_robot.metrics.coverage import CoverageState, PoseSample, floor_xy
+from gaussian_robot.metrics.coverage3d import Coverage3D, build_coverage3d
+from gaussian_robot.nav.action import (
+    Action,
+    ActionSpace,
+    apply_action,
+    interpolate_pose,
+    slerp_rotation,
+)
 from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
-from gaussian_robot.nav.observation import ObservationBuilder
+from gaussian_robot.nav.observation import ObservationBuilder, frontier_floor_positions
 from gaussian_robot.nav.stop import (
     BoundsGuard,
     CoveragePlateau,
@@ -47,7 +54,10 @@ from gaussian_robot.nav.stop import (
     SessionStopPolicy,
     StopPolicy,
     StuckGuard,
+    TaskComplete,
+    TaskStop,
 )
+from gaussian_robot.nav.terrain import HeightField, aerial_target, build_height_field
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import CameraIntrinsics, Pose, axis_index, up_vector
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
@@ -58,6 +68,12 @@ _FLOOR_PLANE = {0: (1, 2), 1: (0, 2), 2: (0, 1)}
 # Fixed RNG seed for reproducible density-weighted candidate sampling. This is a
 # numpy PRNG seed — unrelated to the SeedPoses that walks start from.
 _RNG_SEED = 42
+
+# Seed validation thresholds. Stricter than the mid-walk degeneracy bar
+# (_WALK_MIN_FINITE_FRAC = 0.25 in nav/explorer.py): a seed must *start* looking at
+# solid, reconstructed geometry, whereas mid-walk we tolerate openness/sky.
+_SEED_MIN_FINITE_FRAC = 0.5
+_SEED_MIN_ALPHA = 0.15
 
 
 def _floor_axes(up_axis: str) -> tuple[int, int]:
@@ -287,25 +303,10 @@ def animate_forward(config: RunConfig, n_frames: int = 20, n_steps: int = 4) -> 
     return {"frames": frames, "ok": True, "step_size": space.step, "n_steps": n_steps}
 
 
-def _rotation_geodesic(r0: np.ndarray, r1: np.ndarray, t: float) -> np.ndarray:
-    """Interpolate two world->camera rotations along the SO(3) geodesic (slerp).
-
-    Uses the same world-frame composition as ``apply_action`` (``R = Rw @ R0``):
-    the relative world rotation ``r1 @ r0.T`` is reduced to axis-angle and applied
-    by a fraction ``t``. Robust for the small per-step rotations a walk makes.
-    """
-    from gaussian_robot.nav.action import _rotation_about_axis  # noqa: PLC0415
-
-    rel = r1 @ r0.T
-    cos = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
-    theta = math.acos(cos)
-    if theta < 1e-6:
-        return r0.copy()
-    axis = np.array(
-        [rel[2, 1] - rel[1, 2], rel[0, 2] - rel[2, 0], rel[1, 0] - rel[0, 1]], dtype=np.float64
-    ) / (2.0 * math.sin(theta))
-    interpolated: np.ndarray = _rotation_about_axis(axis, t * theta) @ r0
-    return interpolated
+# Pose interpolation lives in nav.action (shared with the live tween in the explorer);
+# kept under the old names here for the movie helpers and their tests.
+_rotation_geodesic = slerp_rotation
+_interp_pose = interpolate_pose
 
 
 def interpolate_walk_poses(poses: list[Pose], per_segment: int) -> list[Pose]:
@@ -327,14 +328,6 @@ def interpolate_walk_poses(poses: list[Pose], per_segment: int) -> list[Pose]:
             out.append(Pose(position=pos, rotation=rot))
     out.append(poses[-1])
     return out
-
-
-def _interp_pose(a: Pose, b: Pose, t: float) -> Pose:
-    """Pose between ``a`` and ``b``: linear position, slerped orientation."""
-    return Pose(
-        position=a.position * (1 - t) + b.position * t,
-        rotation=_rotation_geodesic(a.rotation, b.rotation, t),
-    )
 
 
 def _movie_frame_plan(
@@ -422,9 +415,13 @@ def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
         forward[_floor_axes(up_axis)[1]] = 1.0
     else:
         forward = forward / fn
-    right = np.cross(up, forward)
+    # [right, down, forward] must be a proper (det +1) rotation, else the render is mirrored.
+    # right = forward × up (not up × forward) and down = forward × right give a right-handed
+    # basis that is also upright (down ≈ -up); the swapped order is a reflection (det −1).
+    right = np.cross(forward, up)
     right /= np.linalg.norm(right)
-    down = np.cross(right, forward)
+    down = np.cross(forward, right)
+    down /= np.linalg.norm(down)
     return np.stack([right, down, forward], axis=0)
 
 
@@ -639,14 +636,22 @@ def validate_seed_poses(
     re-ranked by render quality (median depth x alpha) so the best guesses are
     tried first, and an extra median-depth floor rejects views buried in geometry.
 
-    When not ``strict`` (capture-pose seeds), the incoming farthest-point order is
-    preserved for spatial diversity, but views whose sharpness is below the median
-    of the candidate pool are skipped — so a real but blurry/under-reconstructed
-    capture view doesn't become a seed while sharper, equally-spread ones exist.
+    When not ``strict`` (capture-pose seeds), candidates are ordered by proximity to
+    the nearest reconstruction frontier, so walks START near the gaps they should
+    fill; blurry views (sharpness below the pool median) are skipped, and selected
+    seeds are de-duplicated by a local-window spacing so they don't all cluster on
+    one gap. With no frontiers, the original farthest-point spread order is kept.
     """
     from gaussian_robot.render.camera import Camera  # noqa: PLC0415
 
     intrinsics = _PREVIEW_INTRINSICS
+    frontiers = frontier_floor_positions(renderer)
+
+    def _frontier_dist(seed: SeedPose) -> float:
+        if frontiers.shape[0] == 0:
+            return 0.0  # no weighting: keep input (farthest-point) order via stable sort
+        xz = seed.pose.position[[0, 2]]
+        return float(np.min(((frontiers - xz) ** 2).sum(axis=1)))
 
     # Render every candidate once and cache its metrics (avoids double-rendering).
     scored: list[tuple[SeedPose, float, float, float, float]] = []
@@ -667,20 +672,35 @@ def validate_seed_poses(
         ordered = sorted(scored, key=lambda it: it[2] * it[3], reverse=True)
         sharp_floor = 0.0
     else:
-        ordered = scored  # preserve farthest-point spread
-        valid_sharps = [sh for (_, ff, _, a, sh) in scored if ff >= 0.5 and a >= 0.15]
+        ordered = sorted(scored, key=lambda it: _frontier_dist(it[0]))  # nearest-to-gap first
+        valid_sharps = [
+            sh
+            for (_, ff, _, a, sh) in scored
+            if ff >= _SEED_MIN_FINITE_FRAC and a >= _SEED_MIN_ALPHA
+        ]
         sharp_floor = float(np.median(valid_sharps)) if valid_sharps else 0.0
 
+    min_spacing = step * 8.0  # prefer selected seeds at least a local window apart
     seeds: list[SeedPose] = []
+    spacing_held: list[SeedPose] = []  # valid but too close to a kept seed — used to top up
     for s, finite_frac, median_depth, alpha_mean, sharp in ordered:
         if len(seeds) >= num_seeds:
             break
-        if finite_frac < 0.5 or alpha_mean < 0.15:
+        if finite_frac < _SEED_MIN_FINITE_FRAC or alpha_mean < _SEED_MIN_ALPHA:
             continue
         if strict and median_depth < step:
             continue
         if not strict and sharp < sharp_floor:
             continue  # skip the blurriest real views; a sharper spread one remains
+        xz = s.pose.position[[0, 2]]
+        if any(float(np.linalg.norm(xz - t.pose.position[[0, 2]])) < min_spacing for t in seeds):
+            spacing_held.append(s)  # would cluster — hold in case we need to reach num_seeds
+            continue
+        seeds.append(s)
+    # Honour num_seeds: if the spacing left us short, top up with the held (closer) seeds.
+    for s in spacing_held:
+        if len(seeds) >= num_seeds:
+            break
         seeds.append(s)
     return seeds or [ordered[0][0]]
 
@@ -730,6 +750,125 @@ def assemble_deliverable(
     )
 
 
+def _build_coverage3d(
+    renderer: Renderer,
+    means: np.ndarray,
+    capture_poses: list[Pose],
+    config: RunConfig,
+    bmin: np.ndarray,
+    bmax: np.ndarray,
+) -> Coverage3D | None:
+    """Build the Tier-3 3D coverage from the splat + capture cameras, or None."""
+    from gaussian_robot.splat.capture_poses import (  # noqa: PLC0415
+        discover_capture_poses,
+        representative_fov,
+    )
+
+    cloud = getattr(renderer, "cloud", None)
+    opac = getattr(cloud, "opacities", None)
+    if opac is None or not capture_poses:
+        return None
+    opac_np = np.asarray(opac.detach().cpu()) if hasattr(opac, "detach") else np.asarray(opac)
+    cam_pos = np.array([p.position for p in capture_poses], dtype=np.float64)
+    cam_rot = np.array([p.rotation for p in capture_poses], dtype=np.float64)
+    source = config.poses_path or (
+        discover_capture_poses(config.ply_path) if config.ply_path else None
+    )
+    hfov, vfov = representative_fov(source)
+    m = len(capture_poses)
+    db = getattr(cloud, "density_bounds", None)
+    lo3, hi3 = db if db is not None else (bmin, bmax)
+    return build_coverage3d(
+        means,
+        opac_np.reshape(-1),
+        cam_pos,
+        cam_rot,
+        np.full(m, hfov),
+        np.full(m, vfov),
+        lo3,
+        hi3,
+    )
+
+
+def _clip_to_material_band(
+    gaps: np.ndarray, means: np.ndarray, up_axis: str, *, ceiling_pct: float = 99.0
+) -> np.ndarray:
+    """Drop gaps above the real material ceiling (3DGS floaters / unmapped void).
+
+    Height-along-up is ``points @ up_vector`` (sign-safe: larger = higher regardless of
+    axis sign). The ceiling is a robust high percentile of the gaussian heights, so a few
+    stray floaters far above the captured geometry don't seed phantom gaps in empty air.
+    """
+    if gaps.shape[0] == 0 or means.shape[0] == 0:
+        return gaps
+    up = up_vector(up_axis)
+    ceiling = float(np.percentile(means @ up, ceiling_pct))
+    kept: np.ndarray = gaps[(gaps @ up) <= ceiling]
+    return kept
+
+
+def _aerial_seed(
+    renderer: Renderer,
+    points: np.ndarray,
+    up_axis: str,
+    bmin: np.ndarray,
+    bmax: np.ndarray,
+    space: ActionSpace,
+) -> SeedPose | None:
+    """A walk seed high above ``points``, pitched down to survey from above.
+
+    ``points`` are the geometry to survey over — the 3D coverage gaps when available
+    (so it targets genuinely unseen rooftops/structure), else all gaussian means.
+    Flies to a vantage over the tallest of them (``aerial_target``) looking ~60° down
+    toward the scene centre. None on a flat scene or if the vantage looks into the void.
+    """
+    from gaussian_robot.render.camera import Camera  # noqa: PLC0415
+
+    at = aerial_target(points, up_axis)
+    if at is None:
+        return None
+    xz, survey_h = at
+    a_idx, b_idx = _floor_axes(up_axis)
+    pos: np.ndarray = np.zeros(3)
+    pos[a_idx], pos[b_idx] = xz[0], xz[1]
+    pos = np.clip(pos + survey_h * up_vector(up_axis), bmin, bmax)
+    pose = Pose(position=pos, rotation=look_at(pos, (bmin + bmax) / 2.0, up_axis))
+    for _ in range(2):  # pitch ~60° down to frame the structures below/ahead
+        pose = apply_action(pose, Action.LOOK_DOWN, space, up_axis)
+    result = renderer.render(Camera(pose=pose, intrinsics=_PREVIEW_INTRINSICS))
+    if result.depth is None or float(np.isfinite(result.depth).mean()) < _SEED_MIN_FINITE_FRAC:
+        return None  # vantage looks into sky/void — skip
+    return SeedPose(pose=pose, kind="aerial")
+
+
+def _build_stop_policies(
+    config: RunConfig, space: ActionSpace, coverage_radius: float, task_mode: bool
+) -> tuple[list[StopPolicy], list[SessionStopPolicy]]:
+    """Walk- and session-level stop policies for the run's mode.
+
+    Task mode: the VLM owns completion (``TaskStop`` ends the walk on a ``stop``, ``TaskComplete``
+    ends the session), with the bounds/stuck safety guards. Densify mode: coverage-driven.
+    """
+    if task_mode:
+        walk: list[StopPolicy] = [TaskStop(), BoundsGuard(), StuckGuard(step=space.step)]
+        session: list[SessionStopPolicy] = [TaskComplete(), SeedExhaustion()]
+        return walk, session
+    walk = [
+        # window=8: tolerate a longer unproductive stretch before ending a walk, so deliberate
+        # fine-grained exploration isn't cut short prematurely.
+        CoveragePlateau(novelty_delta=space.step, window=8),
+        BoundsGuard(),
+        StuckGuard(step=space.step),
+    ]
+    session = [
+        PoseBudget(max_poses=config.pose_budget),
+        CoverageTarget(radius=coverage_radius, tau=0.8),
+        QualityTarget(radius=coverage_radius, tau=0.7),
+        SeedExhaustion(),
+    ]
+    return walk, session
+
+
 def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], CoverageState]:
     """Construct an :class:`Explorer`, seeds and a fresh coverage state from config.
 
@@ -769,6 +908,10 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
 
     # Default the map to a local window (~10 steps across) so motion is visible;
     # the whole-scene view made every step an invisible sub-pixel nudge.
+    task_mode = config.mode == "task"
+    if task_mode and not config.task_prompt.strip():
+        raise ValueError("task mode requires a non-empty task_prompt (the mission)")
+
     map_span = config.map_span if config.map_span is not None else space.step * 10.0
     builder = ObservationBuilder(
         renderer=renderer,
@@ -776,22 +919,40 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         map_size=config.map_size,
         map_span=map_span,
         task=config.task_prompt,
+        mode=config.mode,
         depth_estimator=depth_estimator,
     )
 
-    walk_policies: list[StopPolicy] = [
-        # window=8: tolerate a longer unproductive stretch before ending a walk,
-        # so deliberate fine-grained exploration isn't cut short prematurely.
-        CoveragePlateau(novelty_delta=space.step, window=8),
-        BoundsGuard(),
-        StuckGuard(step=space.step),
-    ]
-    session_policies: list[SessionStopPolicy] = [
-        PoseBudget(max_poses=config.pose_budget),
-        CoverageTarget(radius=coverage_radius, tau=0.8),
-        QualityTarget(radius=coverage_radius, tau=0.7),
-        SeedExhaustion(),
-    ]
+    walk_policies, session_policies = _build_stop_policies(
+        config, space, coverage_radius, task_mode
+    )
+    cloud_means = getattr(getattr(renderer, "cloud", None), "means", None)
+    means_np: np.ndarray | None = None
+    if cloud_means is not None:
+        means_np = (
+            np.asarray(cloud_means.detach().cpu())
+            if hasattr(cloud_means, "detach")
+            else np.asarray(cloud_means)
+        )
+    height_field: HeightField | None = None
+    if config.terrain_follow and means_np is not None:
+        height_field = build_height_field(means_np, up_axis, bmin, bmax)
+
+    # Tier-3 3D coverage: occupied-but-unseen *surface* voxels (occlusion pockets behind
+    # furniture, shaded corners, backs of structure). Confined to the band of real material:
+    # an unmapped region (e.g. an uncaptured upper floor) has no occupancy, so it is never a
+    # "gap" — and stray high floaters above the material are clipped out below.
+    gap_centers = np.empty((0, 3), dtype=np.float64)
+    if not task_mode and config.coverage_3d and means_np is not None and means_np.shape[0] > 0:
+        cov3d = _build_coverage3d(renderer, means_np, capture_poses, config, bmin, bmax)
+        if cov3d is not None:
+            gap_centers = _clip_to_material_band(cov3d.gap_centers(), means_np, up_axis)
+    gap_floor = (
+        floor_xy(gap_centers, up_axis)
+        if gap_centers.shape[0] > 0
+        else np.empty((0, 2), dtype=np.float64)
+    )
+
     explorer = Explorer(
         scene=scene,
         renderer=renderer,
@@ -803,6 +964,11 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         session_policies=session_policies,
         max_steps=config.max_steps,
         mark_target=config.pose_target,
+        tween_frames=config.live_tween_frames,
+        actions_per_query=config.actions_per_query,
+        height_field=height_field,
+        gap_floor=gap_floor,
+        mode=config.mode,
     )
     seed_origin = _best_origin(renderer, up_axis, bmin, bmax)
 
@@ -816,11 +982,20 @@ def build_session(config: RunConfig) -> tuple[Explorer, list[SeedPose], Coverage
         capture_poses=seed_pool,
         up_axis=up_axis,
     )
+    # A task is one goal-directed walk from a single start pose; densify fans out over many.
+    num_seeds = 1 if task_mode else config.num_seeds
     # Capture poses are known-good viewpoints, so validation can be lenient (see
     # validate_seed_poses); guessed density/grid candidates need the strict checks.
     seeds = validate_seed_poses(
-        renderer, candidates, num_seeds=config.num_seeds, step=space.step, strict=not seed_pool
+        renderer, candidates, num_seeds=num_seeds, step=space.step, strict=not seed_pool
     )
+    if not task_mode and config.aerial_survey and means_np is not None:
+        # Survey over the 3D coverage gaps (unseen roofs/structure) when we have them,
+        # else over the tallest geometry.
+        survey_points = gap_centers if gap_centers.shape[0] > 0 else means_np
+        aerial = _aerial_seed(renderer, survey_points, up_axis, bmin, bmax, space)
+        if aerial is not None:
+            seeds.append(aerial)  # one extra walk surveying the gaps from above
 
     coverage = CoverageState.empty(up_axis, bmin, bmax)
     return explorer, seeds, coverage

@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 from gaussian_robot.depth.estimator import DepthEstimator
 from gaussian_robot.metrics.coverage import CoverageState, floor_xy
 from gaussian_robot.render.base import Renderer, RenderResult
-from gaussian_robot.render.camera import Camera, Pose
+from gaussian_robot.render.camera import Camera, Pose, up_vector
 from gaussian_robot.vlm.observation import Observation
 
 
@@ -59,24 +59,81 @@ def _rotation_streak(action_history: list[str] | None) -> int:
 
 
 def frontier_mask(
-    density_grid: np.ndarray, *, empty_max: float = 0.02, observed_min: float = 0.10
+    density_grid: np.ndarray, *, observed_min: float = 0.10, under_frac: float = 0.5
 ) -> np.ndarray:
     """Boolean grid of **reconstruction frontiers**: real holes worth new views.
 
-    A frontier cell is (near-)empty (``<= empty_max`` normalised density — no
-    gaussians yet) **and** 4-adjacent to an observed cell (``> observed_min``).
-    That is the reachable edge of the reconstruction (or an interior pocket the
-    splat missed) — a genuine candidate for capturing new views. Empty cells
-    that only touch other empty cells (open void outside the scene) are *not*
-    frontiers, and dense surfaces (walls/trees you bump into) never qualify.
+    A frontier is an **under-sampled** cell — density below ``under_frac`` of the
+    *typical observed* density (the median over reconstructed cells) — that is
+    4-adjacent to a reconstructed cell (``> observed_min``). This captures both
+    the reconstruction's outer edge (empty cells next to observed ones) **and**
+    interior under-sampled pockets (sparse-but-not-empty regions like smeared
+    ground/foliage), so a gap *near the agent* is found — not only the far scene
+    boundary. Fully-reconstructed cells and open void with no observed neighbour
+    never qualify.
     """
     observed = density_grid > observed_min
+    if not observed.any():
+        return np.zeros(density_grid.shape, dtype=bool)
+    under_max = under_frac * float(np.median(density_grid[observed]))
     adj = np.zeros(density_grid.shape, dtype=bool)
     adj[:-1, :] |= observed[1:, :]
     adj[1:, :] |= observed[:-1, :]
     adj[:, :-1] |= observed[:, 1:]
     adj[:, 1:] |= observed[:, :-1]
-    return (density_grid <= empty_max) & adj
+    return (density_grid < under_max) & adj
+
+
+def _line_of_sight_clear(
+    a: np.ndarray,
+    b: np.ndarray,
+    grid: np.ndarray,
+    bounds: tuple[np.ndarray, np.ndarray],
+    occ_threshold: float,
+    *,
+    samples: int = 24,
+) -> bool:
+    """True if the floor segment ``a -> b`` (world x,z) avoids occupied cells.
+
+    Heuristic reachability: a cell is "occupied" (a wall/tree/solid you can't cross)
+    when its top-down density is ``>= occ_threshold``. Samples the segment interior
+    (endpoints skipped — the gap is sparse by definition, the agent sits in free
+    space). A coarse proxy on a top-down grid, used only to *prefer* a reachable gap.
+    """
+    lo, hi = bounds
+    wx, wz = hi[0] - lo[0], hi[2] - lo[2]
+    g = grid.shape[0]
+    if wx <= 0 or wz <= 0:
+        return True
+    for t in np.linspace(0.1, 0.9, samples):
+        p = a * (1 - t) + b * t
+        ix = int((p[0] - lo[0]) / wx * g)
+        iz = int((p[1] - lo[2]) / wz * g)
+        if 0 <= ix < g and 0 <= iz < g and grid[ix, iz] >= occ_threshold:
+            return False
+    return True
+
+
+def frontier_floor_positions(renderer: Renderer) -> np.ndarray:
+    """World floor ``(K, 2)`` centres of every reconstruction frontier cell.
+
+    Computed from the renderer's (static) density grid; empty ``(0, 2)`` when the
+    renderer has no density grid or the scene has no frontiers.
+    """
+    cloud = getattr(renderer, "cloud", None)
+    grid = getattr(cloud, "density_grid", None)
+    db = getattr(cloud, "density_bounds", None)
+    if grid is None or db is None:
+        return np.empty((0, 2), dtype=np.float64)
+    mask = frontier_mask(grid)
+    if not mask.any():
+        return np.empty((0, 2), dtype=np.float64)
+    lo, hi = db
+    g = grid.shape[0]
+    ix, iz = np.nonzero(mask)  # grid axes [x_bin, z_bin]
+    gx = lo[0] + (ix + 0.5) / g * (hi[0] - lo[0])
+    gz = lo[2] + (iz + 0.5) / g * (hi[2] - lo[2])
+    return np.stack([gx, gz], axis=1).astype(np.float64)
 
 
 def depth_to_uint8(depth: np.ndarray | None) -> np.ndarray:
@@ -123,6 +180,8 @@ class ObservationBuilder:
     map_size: int = 512
     map_span: float | None = None
     task: str = ""
+    mode: str = "densify"  # "densify" (explore for coverage) | "task" (pursue the goal in `task`)
+    task_target: np.ndarray | None = None  # (3,) world pos of the task target (privileged GT hint)
     depth_estimator: DepthEstimator | None = None
     describe_prompt: str = (
         "This is a render of a 3D Gaussian Splatting (3DGS) reconstruction, not a real photo. "
@@ -136,13 +195,11 @@ class ObservationBuilder:
         "for new viewpoints to improve the reconstruction?"
     )
     prompt: str = (
-        "You are a robot inside a 3D Gaussian-Splat reconstruction. Your job is to find "
-        "under-reconstructed spots and MARK them: each MARK records your current viewpoint as a "
-        "proposed new camera view to fill the scene in. The marked poses ARE your deliverable — "
-        "you are collecting them toward a target shown in [state] as 'marks N/target'. Travel to "
-        "gaps (under-sampled regions you can reach), and whenever you arrive facing a blurry / "
-        "under-observed region, MARK before moving on. Keep moving and keep marking until you hit "
-        "the target; do NOT just wander or stare at things without marking.\n"
+        "You are a robot inside a 3D Gaussian-Splat reconstruction. Your job is to EXPLORE: roam "
+        "widely and cover NEW ground, travelling through under-reconstructed regions so they can "
+        "be re-captured. COVERING DISTANCE is the goal — reach areas you haven't visited. The "
+        "system AUTO-MARKS good fill-in viewpoints as you pass, so you do NOT need to mark much; "
+        "use MARK sparingly (see below) and keep moving. Do not circle or dwell in one spot.\n"
         "\n"
         "WHAT A GAP IS (and is NOT):\n"
         "- A gap is OPEN, reachable space that is under-observed — you can travel toward it.\n"
@@ -167,31 +224,80 @@ class ObservationBuilder:
         "for the bearing/distance to the closest gap.\n"
         "\n"
         "STRATEGY:\n"
-        "1. FORWARD IS YOUR DEFAULT. Only turning never gets you anywhere — turns and looks do "
-        "NOT change your position, only forward/back do. If the way ahead is open (wall_distance "
-        "is not small), move FORWARD to make progress and reveal new area.\n"
-        "2. NEVER turn more than twice in a row. After at most two turns you MUST move forward or "
-        "back. Do not oscillate turn_left/turn_right — pick a direction and commit by moving.\n"
+        "1. FORWARD IS YOUR DEFAULT. Turns/looks do NOT change your position — only forward/back "
+        "do. When the way ahead is open (wall_distance not small), take SEVERAL forward steps in "
+        "a row to reach new, unexplored ground (high 'novelty' in [state]). If novelty is near 0 "
+        "you are re-treading old ground — go somewhere else.\n"
+        "2. NEVER turn more than twice in a row, and after turning take several forwards before "
+        "turning again. Do not oscillate turn_left/turn_right or forward/back — commit to a "
+        "direction and travel.\n"
         "3. Gap is a soft bias, not a precondition: if the 'nearest gap' bearing is well off to "
         "one side, turn toward it once or twice and then advance. You do NOT need it perfectly "
         "centred — once it's roughly ahead, MOVE.\n"
-        "4. Obstacle handling: if wall_distance is small or [depth] is mostly bright you face a "
-        "surface — turn once or twice OR back up to find an open direction, then move. Don't keep "
-        "turning in place.\n"
-        "5. MARK often — it is your main output. Whenever you reach an under-reconstructed spot "
-        "(dark [confidence] holes, smeared ground/foliage, a gap you traveled to) and it fills "
-        "your view, emit MARK to record this viewpoint as a proposed new view. One mark per "
-        "distinct spot, then move on to the next. Watch 'marks N/target' in [state] and keep "
-        "marking until you reach the target.\n"
-        "6. LOOK_UP / LOOK_DOWN to check ceilings/floors when entering a new area; DESCRIBE if "
-        "disoriented.\n"
+        "4. ESCAPE walls: if a forward is BLOCKED (you didn't move) or wall_distance is tiny, do "
+        "NOT keep nudging forward — that wastes the walk. BACK up a step or two, or turn ~180° "
+        "(turn the SAME way three times) to face open space, then travel that way. Treat the "
+        "'!! BLOCKED' note in [state] as an order to back up / turn around, not to retry forward.\n"
+        "5. MARK SPARINGLY. Good fill-in poses are recorded automatically as you explore, so do "
+        "NOT mark every step. Only MARK a distinct gap you specifically want captured — at most "
+        "once per area, and NEVER several steps in a row. Marking is not the goal; covering new "
+        "ground is. After a mark, move on.\n"
+        "6. PURSUE THE SCENE'S PRIORITIES, and explore in 3D. The SCENE DESCRIPTION names the "
+        "specific under-covered areas worth new views (e.g. behind the buildings, the rooftops, "
+        "an upper floor, a staircase) — actively head to those, even far from where you started; "
+        "don't fixate on one nearby object. This is a 3D scene: use MOVE_UP to gain height for "
+        "rooftop/aerial views and to reach upper levels (climb floor by floor), MOVE_DOWN to "
+        "descend, and LOOK_UP / LOOK_DOWN to inspect tops and undersides. Don't crawl only at "
+        "ground level near the seed. DESCRIBE again when you reach a very different area.\n"
         "\n"
         "STOPPING:\n"
         "- Keep going while there is open space to explore or a gap is reported in [state].\n"
         "- Only stop when coverage is high and there is nowhere new to go. A wall, a dead end, or "
         "not seeing a gap is NEVER a reason to stop — move forward or turn around and keep going.\n"
         "\n"
-        'Reply ONLY with JSON: {"action": "<forward|back|turn_left|turn_right|move_up|move_down|look_up|look_down|mark|describe|stop>"}.'
+        "Reply ONLY with JSON — a short PLAN of 1-5 actions to run in order, e.g. "
+        '{"actions": ["forward", "forward", "turn_left", "forward"]}. (A single '
+        '{"action": "forward"} also works.) You are re-queried after the plan finishes, or '
+        "sooner if you get blocked — so plan a few steps toward the gap rather than one at a "
+        "time. Verbs: forward, back, turn_left, turn_right, move_up, move_down, look_up, "
+        "look_down, mark, describe, stop."
+    )
+    task_prompt_base: str = (
+        "You are a robot inside a 3D Gaussian-Splat reconstruction of a real place. You have a "
+        "MISSION, given under TASK below — for example reaching a location, finding an object, "
+        "or fetching an object from one place and carrying it to another. Accomplishing the "
+        "MISSION is your ONLY goal; do not wander for coverage.\n"
+        "\n"
+        "HOW TO ACT:\n"
+        "- NAVIGATE toward the target. forward/back move you; turn_left/turn_right and "
+        "look_up/look_down only change where you look; move_up/move_down change height.\n"
+        "- When [state] reports a TARGET bearing/distance, STEER BY IT: if it says a side, "
+        "turn that way until the target is roughly ahead, then go forward to close the distance. "
+        "It is your compass to the goal — trust it over guessing.\n"
+        "- GROUND THE TARGET in the [rgb] view: if you can see the thing the MISSION refers to, "
+        "head straight to it. If you can't see it, explore toward where it is likely to be "
+        "(through doorways, along the room) and DESCRIBE to reason about what you see.\n"
+        "- GRAB when you have reached the object to pick up (you must be right in front of it). "
+        "DROP when you have carried it to the destination and are in place to release it. These "
+        "are simulated: they do not move you, they only change whether you are carrying it "
+        "([state] shows 'carrying').\n"
+        "- A fetch-and-carry mission is: go to the object -> grab -> go to the destination -> "
+        "drop -> stop. A find/reach mission is: go to the target -> stop (grab too if asked).\n"
+        "- STOP only when the MISSION is fully complete. In task mode STOP ends the run "
+        "immediately, so do not stop early.\n"
+        "\n"
+        "PANELS: [rgb] camera view; [depth] distance ahead (bright=near); [confidence] render "
+        "alpha (dark=missing geometry); [map] local top-down, rotating with you (up=forward), "
+        "red arrow=you, your trail in amber. Blurriness is a reconstruction artifact, not fog.\n"
+        "\n"
+        "Avoid driving into walls: if a forward is BLOCKED or wall_distance is tiny, turn or "
+        "back up and go around. Do not turn more than twice in a row without moving.\n"
+        "\n"
+        "Reply ONLY with JSON — a short PLAN of 1-5 actions to run in order, e.g. "
+        '{"actions": ["forward", "forward", "grab"]}. (A single {"action": "forward"} also '
+        "works.) You are re-queried after the plan finishes or if you get blocked. Verbs: "
+        "forward, back, turn_left, turn_right, move_up, move_down, look_up, look_down, grab, "
+        "drop, describe, stop."
     )
 
     def build(
@@ -207,6 +313,8 @@ class ObservationBuilder:
         scene_description: str = "",
         marks: int = 0,
         mark_target: int = 0,
+        blocked_ahead: bool = False,
+        carrying: bool = False,
     ) -> tuple[Observation, RenderResult]:
         """Render the view and assemble the observation.
 
@@ -223,20 +331,40 @@ class ObservationBuilder:
             display_depth = self.depth_estimator.estimate(result.rgb)
         depth_panel = depth_to_uint8(display_depth)
         confidence_panel = self._confidence_panel(result.alpha)
+        task_mode = self.mode == "task"
         cur_floor = floor_xy(camera.pose.position, self.up_axis)[0]
-        gap_xy = self._nearest_gap(cur_floor)
-        gap_info = self._gap_bearing(camera.pose, cur_floor, gap_xy)
+        # The coverage-gap pointer is meaningless in task mode (the goal is the mission,
+        # not coverage), so suppress it from both the map and the state line.
+        gap_xy = None if task_mode else self._nearest_gap(cur_floor)
+        gap_info = None if task_mode else self._gap_bearing(camera.pose, cur_floor, gap_xy)
         map_panel = self._body_frame_map(coverage, camera.pose, trail, gap_xy=gap_xy)
         wall_distance = wall_distance_from_depth(result.depth)
-        state_line = self._state_line(
-            camera.pose, step, budget, coverage_pct, wall_distance, gap_info, marks, mark_target
-        )
+        if task_mode:
+            target_info = None
+            if self.task_target is not None:
+                tgt_floor = floor_xy(self.task_target, self.up_axis)[0]
+                target_info = self._gap_bearing(camera.pose, cur_floor, tgt_floor)
+            state_line = self._task_state_line(
+                camera.pose, step, budget, wall_distance, carrying, blocked_ahead, target_info
+            )
+        else:
+            state_line = self._state_line(
+                camera.pose,
+                step,
+                budget,
+                coverage_pct,
+                wall_distance,
+                gap_info,
+                marks,
+                mark_target,
+                blocked_ahead,
+            )
 
-        parts = [self.prompt]
+        parts = [self.task_prompt_base if task_mode else self.prompt]
+        if self.task:
+            parts.append(f"TASK (your mission): {self.task}" if task_mode else f"TASK: {self.task}")
         if scene_description:
             parts.append(f"SCENE DESCRIPTION: {scene_description}")
-        if self.task:
-            parts.append(f"TASK: {self.task}")
         if action_history:
             recent = action_history[-8:]
             parts.append(f"[history] last actions: {', '.join(recent)}")
@@ -280,6 +408,41 @@ class ObservationBuilder:
         gray = (alpha * 255).clip(0, 255).astype(np.uint8)
         return _gray_to_rgb(gray)
 
+    def _task_state_line(
+        self,
+        pose: Pose,
+        step: int,
+        budget: int,
+        wall_distance: float | None,
+        carrying: bool,
+        blocked_ahead: bool,
+        target_info: tuple[float, float] | None = None,
+    ) -> str:
+        """Compact state for task mode: position, carried-state, wall, blocked, target bearing."""
+        step_str = f"{step}/{budget}" if budget > 0 else str(step)
+        parts = [
+            f"[state] step {step_str}",
+            f"pose ({pose.position[0]:.2f},{pose.position[1]:.2f},{pose.position[2]:.2f})",
+            f"carrying {'yes' if carrying else 'no'}",
+        ]
+        if target_info is not None:
+            dist, bearing = target_info
+            if abs(bearing) < 12:
+                parts.append(f"TARGET {dist:.1f}m ahead — go forward")
+            else:
+                side = "right" if bearing > 0 else "left"
+                parts.append(
+                    f"TARGET {abs(bearing):.0f}° {side}, {dist:.1f}m — turn {side} then forward"
+                )
+        if wall_distance is not None:
+            parts.append(f"wall ahead {wall_distance:.2f}m")
+        if blocked_ahead:
+            parts.append(
+                "!! BLOCKED: a wall is right ahead and your last forward did NOT move you — "
+                "do not go forward; BACK up or turn ~180° (same way 3×) toward open space"
+            )
+        return "; ".join(parts)
+
     def _state_line(
         self,
         pose: Pose,
@@ -290,6 +453,7 @@ class ObservationBuilder:
         gap_info: tuple[float, float] | None = None,
         marks: int = 0,
         mark_target: int = 0,
+        blocked_ahead: bool = False,
     ) -> str:
         step_str = f"{step}/{budget}" if budget > 0 else str(step)
         parts = [
@@ -310,26 +474,39 @@ class ObservationBuilder:
                 parts.append(f"nearest gap {abs(bearing):.0f}° {side}, {dist:.1f}m")
         else:
             parts.append("nearest gap: none in range")
+        if blocked_ahead:
+            parts.append(
+                "!! BLOCKED: a wall is right ahead and your last forward did NOT move you — "
+                "do not go forward; BACK up a step or two, or turn ~180° (same way 3×) to open space"
+            )
         return "; ".join(parts)
 
     def _nearest_gap(self, cur_floor: np.ndarray) -> np.ndarray | None:
-        """World floor ``(x, z)`` of the nearest reconstruction frontier, or None."""
+        """World floor ``(x, z)`` of the best nearby reconstruction frontier, or None.
+
+        Prefers the nearest frontier reachable by a clear straight path (no occupied
+        cells crossed); falls back to the plain nearest frontier when none is clear.
+        """
+        pts = frontier_floor_positions(self.renderer)
+        if pts.shape[0] == 0:
+            return None
+        order = np.argsort(((pts - cur_floor) ** 2).sum(axis=1))
         cloud = getattr(self.renderer, "cloud", None)
         grid = getattr(cloud, "density_grid", None)
         db = getattr(cloud, "density_bounds", None)
-        if grid is None or db is None:
-            return None
-        mask = frontier_mask(grid)
-        if not mask.any():
-            return None
-        lo, hi = db
-        g = grid.shape[0]
-        ix, iz = np.nonzero(mask)  # axes [x_bin, z_bin]
-        gx = lo[0] + (ix + 0.5) / g * (hi[0] - lo[0])
-        gz = lo[2] + (iz + 0.5) / g * (hi[2] - lo[2])
-        pts = np.stack([gx, gz], axis=1)
-        d2 = ((pts - cur_floor) ** 2).sum(axis=1)
-        return np.asarray(pts[int(np.argmin(d2))], dtype=np.float64)
+        if grid is not None and db is not None:
+            dense = grid[grid > 0.1]
+            if dense.size:
+                occ = float(np.quantile(dense, 0.85))  # top ~15% density = likely solid
+                for i in order[:24]:  # check only the nearest handful
+                    if _line_of_sight_clear(cur_floor, pts[i], grid, db, occ):
+                        return np.asarray(pts[i], dtype=np.float64)
+        return np.asarray(pts[int(order[0])], dtype=np.float64)
+
+    def nearest_gap(self, pose: Pose) -> tuple[float, float] | None:
+        """(distance, signed bearing°) to the nearest frontier from ``pose``, or None."""
+        cur = floor_xy(pose.position, self.up_axis)[0]
+        return self._gap_bearing(pose, cur, self._nearest_gap(cur))
 
     def _gap_bearing(
         self, pose: Pose, cur_floor: np.ndarray, gap_xy: np.ndarray | None
@@ -337,10 +514,18 @@ class ObservationBuilder:
         """(distance, signed bearing°) to ``gap_xy`` in the agent frame (+ = right)."""
         if gap_xy is None:
             return None
-        fwd2 = floor_xy(pose.heading(self.up_axis), self.up_axis)[0]
+        fwd3 = pose.heading(self.up_axis)
+        fwd2 = floor_xy(fwd3, self.up_axis)[0]
         n2 = float(np.linalg.norm(fwd2))
         fwd2 = np.array([1.0, 0.0]) if n2 < 1e-9 else fwd2 / n2
-        right2 = np.array([fwd2[1], -fwd2[0]])
+        # Right = up × forward (3D), projected to the floor. Deriving handedness this way is
+        # sign-correct for ANY up axis; the old guess [fwd_b, -fwd_a] was wrong for a negative
+        # up axis (e.g. -y), which inverted the left/right steering cue — and so the turn the
+        # agent (or the bearing-following teacher) should make to face the target.
+        right3 = np.cross(up_vector(self.up_axis), fwd3)
+        right2 = floor_xy(right3, self.up_axis)[0]
+        n3 = float(np.linalg.norm(right2))
+        right2 = np.array([0.0, 1.0]) if n3 < 1e-9 else right2 / n3
         v = gap_xy - cur_floor
         ahead = float(v @ fwd2)
         right = float(v @ right2)

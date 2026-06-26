@@ -53,6 +53,17 @@ def test_look_at_respects_up_sign() -> None:
     np.testing.assert_allclose(rot_plus[1, :], [0, -1, 0], atol=1e-9)
 
 
+def test_look_at_is_a_proper_rotation_not_a_mirror() -> None:
+    # det must be +1: a left-handed (det -1) basis is a reflection, which renders mirrored.
+    for up in ("-y", "y", "z", "-x"):
+        rot = look_at(np.zeros(3), np.array([1.0, 0.3, 0.7]), up)
+        assert np.isclose(np.linalg.det(rot), 1.0, atol=1e-6), up
+        np.testing.assert_allclose(rot @ rot.T, np.eye(3), atol=1e-6)  # orthonormal
+    # -y up, looking +z: camera right (row 0) is +x (not -x, which was the mirror bug).
+    rot = look_at(np.zeros(3), np.array([0.0, 0.0, 1.0]), "-y")
+    np.testing.assert_allclose(rot[0, :], [1, 0, 0], atol=1e-9)
+
+
 def test_forward_is_third_row_unit() -> None:
     pose = Pose(rotation=np.eye(3))
     assert np.allclose(pose.forward(), [0, 0, 1])

@@ -1,0 +1,223 @@
+{
+ "scene_id": "ufficio360",
+ "schema_version": 1,
+ "tasks": [
+  {
+   "task_id": "ufficio360/t00",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the water cooler.",
+   "target": "obj_01",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_01"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t01",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the photocopier.",
+   "target": "obj_02",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_02"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t02",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the door.",
+   "target": "obj_04",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_04"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t03",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the Banner.",
+   "target": "obj_06",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_06"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t04",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the Vending Machine.",
+   "target": "obj_15",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_15"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t05",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the television.",
+   "target": "obj_37",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_37"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t06",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the fire extinguisher.",
+   "target": "obj_35",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_35"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t07",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the whiteboard.",
+   "target": "obj_41",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_41"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t08",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "Go to the Event Backdrop.",
+   "target": "obj_29",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_29"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t09",
+   "scene_id": "ufficio360",
+   "type": "fetch_carry",
+   "instruction": "Pick up the banner and bring it to the Event Backdrop.",
+   "target": "obj_00",
+   "destination": "obj_29",
+   "goal_predicates": [
+    {
+     "pred": "holding",
+     "args": [
+      "agent",
+      "obj_00"
+     ]
+    },
+    {
+     "pred": "at",
+     "args": [
+      "obj_00",
+      "obj_29"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  }
+ ]
+}

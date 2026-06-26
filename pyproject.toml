@@ -93,6 +93,8 @@ packages = ["src/gaussian_robot"]
 line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
+# experiments/ holds R&D prototype scripts (perception probes), not production code.
+extend-exclude = ["experiments"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "PL"]

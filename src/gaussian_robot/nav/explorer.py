@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from gaussian_robot.events import (
+    CarryEvent,
     EventSink,
     MarkEvent,
     SceneDescribeEvent,
@@ -32,8 +33,18 @@ from gaussian_robot.metrics.coverage import (
     floor_xy,
     pose_space_coverage,
 )
-from gaussian_robot.nav.action import Action, ActionSpace, apply_action, capped_forward_step
-from gaussian_robot.nav.observation import ObservationBuilder, wall_distance_from_depth
+from gaussian_robot.nav.action import (
+    Action,
+    ActionSpace,
+    apply_action,
+    capped_forward_step,
+    interpolate_pose,
+)
+from gaussian_robot.nav.observation import (
+    ObservationBuilder,
+    frontier_floor_positions,
+    wall_distance_from_depth,
+)
 from gaussian_robot.nav.robot import Robot
 from gaussian_robot.nav.stop import (
     SessionContext,
@@ -43,8 +54,9 @@ from gaussian_robot.nav.stop import (
     session_stop_reason,
     walk_stop_reason,
 )
+from gaussian_robot.nav.terrain import HeightField
 from gaussian_robot.render.base import Renderer, RenderResult
-from gaussian_robot.render.camera import Pose
+from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose, up_vector
 from gaussian_robot.splat.scene import SplatScene
 from gaussian_robot.vlm.client import Decision, VLMClient
 from gaussian_robot.vlm.observation import Observation
@@ -95,8 +107,23 @@ class WalkResult:
         return [s.pose for s in self.steps]
 
 
-def _render_degenerate(result: RenderResult, *, min_finite_frac: float = 0.25) -> bool:
-    """Heuristic: a render is degenerate if depth is mostly non-finite."""
+# A mid-walk view is "degenerate" only when it is *mostly* into the void. This is
+# deliberately more lenient than seed validation (_SEED_MIN_FINITE_FRAC in session.py,
+# 0.5): a seed must start on solid geometry, but mid-walk we tolerate partial sky/
+# openness so the robot can cross open areas without the walk being killed.
+_WALK_MIN_FINITE_FRAC = 0.25
+
+
+def _render_degenerate(
+    result: RenderResult, *, min_finite_frac: float = _WALK_MIN_FINITE_FRAC
+) -> bool:
+    """Heuristic: a render is degenerate if depth is mostly non-finite.
+
+    Note: ``BoundsGuard`` evaluates this on the *current* view (the render the
+    observation was built from), so an empty view is caught the step after the robot
+    enters it; an out-of-AABB ``next_pose`` is caught immediately by the bounds test
+    in :meth:`Explorer._is_degenerate`.
+    """
     if result.depth is None:
         return False
     finite_frac: float = float(np.isfinite(result.depth).mean())
@@ -131,7 +158,16 @@ class Explorer:
     max_steps: int = 40
     event_sink: EventSink | None = None
     mark_target: int = 0  # informational target shown to the VLM in [state]
-    _marks_total: int = 0  # running count of VLM-marked fill-in poses this session
+    auto_mark: bool = True  # auto-mark a pose when well-positioned at a frontier
+    tween_frames: int = 0  # interpolated RGB frames rendered between views (live smoothing)
+    actions_per_query: int = 1  # action chunking: max actions the VLM plans per query
+    height_field: HeightField | None = None  # ground heights for terrain-following
+    gap_floor: np.ndarray | None = None  # (K, 2) floor-projected 3D coverage gaps, for the UI
+    mode: str = "densify"  # "densify" (coverage) | "task" (goal-directed, grab/drop)
+    _marks_total: int = 0  # running count of marked fill-in poses this session
+    _mark_pos: list[np.ndarray] = field(default_factory=list)  # 3D positions of marks (dedup)
+    _eye_offset: float | None = None  # camera height above local ground for this walk
+    _carrying: bool = False  # task mode: is the robot currently carrying the target?
 
     def _describe_step(
         self,
@@ -161,6 +197,33 @@ class Explorer:
         )
         return description
 
+    def _record_mark(
+        self, pose: Pose, result: WalkResult, *, walk_id: str, step: int, auto: bool
+    ) -> bool:
+        """Add ``pose`` to the deliverable marks and emit a MarkEvent (deduped).
+
+        Skips (returns False) when within ``coverage_radius`` in **3D** of an existing
+        mark — so neither the VLM nor the auto-marker piles marks on one spot, yet an
+        aerial pose directly above a ground mark (large height difference) is kept.
+        """
+        pos = pose.position
+        if any(float(np.linalg.norm(pos - m)) < self.coverage_radius for m in self._mark_pos):
+            return False
+        self._marks_total += 1
+        result.marks.append(pose)
+        self._mark_pos.append(pos)
+        if self.event_sink is not None:
+            self.event_sink(
+                MarkEvent(
+                    walk_id=walk_id,
+                    step=step,
+                    floor=floor_xy(pos, self.scene.up_axis)[0],
+                    count=self._marks_total,
+                    auto=auto,
+                )
+            )
+        return True
+
     def _mark_step(
         self,
         robot: Robot,
@@ -171,9 +234,7 @@ class Explorer:
         step: int,
         raw_text: str = "",
     ) -> None:
-        """Record the current viewpoint as a proposed fill-in pose (the deliverable)."""
-        self._marks_total += 1
-        result.marks.append(robot.pose)
+        """Explicit VLM mark: record it in history/steps, then add it to the deliverable."""
         action_history.append(Action.MARK.value)
         result.steps.append(
             WalkStep(
@@ -184,15 +245,229 @@ class Explorer:
                 raw_text=raw_text,
             )
         )
+        self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=False)
+
+    def _carry_step(
+        self,
+        robot: Robot,
+        action: Action,
+        result: WalkResult,
+        action_history: list[str],
+        *,
+        walk_id: str,
+        step: int,
+        raw_text: str = "",
+    ) -> None:
+        """Task mode: simulated grab/drop. Toggles the carried state and emits a CarryEvent."""
+        action_history.append(action.value)
+        self._carrying = action is Action.GRAB  # grab -> carrying, drop -> not carrying
+        result.steps.append(
+            WalkStep(
+                pose=robot.pose, action=action, novelty=0.0, degenerate=False, raw_text=raw_text
+            )
+        )
         if self.event_sink is not None:
             self.event_sink(
-                MarkEvent(
+                CarryEvent(
                     walk_id=walk_id,
                     step=step,
                     floor=floor_xy(robot.pose.position, self.scene.up_axis)[0],
-                    count=self._marks_total,
+                    kind=action.value,
+                    carrying=self._carrying,
                 )
             )
+
+    def _dispatch_static(
+        self,
+        action: Action,
+        robot: Robot,
+        result: WalkResult,
+        action_history: list[str],
+        scene_description: str,
+        *,
+        walk_id: str,
+        step: int,
+        raw_text: str,
+    ) -> tuple[bool, str, bool]:
+        """Handle the non-moving actions. Returns ``(handled, scene_description, clear_plan)``.
+
+        DESCRIBE refreshes the scene description and forces a re-plan; MARK and the simulated
+        GRAB/DROP record state without moving and keep the current plan running.
+        """
+        if action is Action.DESCRIBE:
+            sd = self._describe_step(
+                robot, result, action_history, walk_id=walk_id, step=step, raw_text=raw_text
+            )
+            return True, sd, True
+        if action is Action.MARK:
+            self._mark_step(
+                robot, result, action_history, walk_id=walk_id, step=step, raw_text=raw_text
+            )
+            return True, scene_description, False
+        if action in (Action.GRAB, Action.DROP):
+            self._carry_step(
+                robot, action, result, action_history, walk_id=walk_id, step=step, raw_text=raw_text
+            )
+            return True, scene_description, False
+        return False, scene_description, False
+
+    def _maybe_auto_mark(
+        self, robot: Robot, result: WalkResult, render: RenderResult, *, walk_id: str, step: int
+    ) -> None:
+        """Auto-mark this viewpoint so the deliverable populates as the robot explores.
+
+        Records a fill-in pose when the view shows real geometry (not empty sky) — and
+        always when standing in a reconstruction frontier. Deduped by the coverage radius
+        in :meth:`_record_mark`, so marks spread roughly one radius apart along the path.
+        This guarantees a non-empty deliverable even when the VLM never emits MARK; reaching
+        the *most* valuable (under-sampled) regions still depends on exploration getting there.
+        """
+        if not self.auto_mark:
+            return
+        gap = self.observation_builder.nearest_gap(robot.pose)
+        at_frontier = gap is not None and gap[0] <= self.coverage_radius
+        has_geometry = render.alpha is None or float(render.alpha.mean()) > 0.15
+        if at_frontier or has_geometry:
+            self._record_mark(robot.pose, result, walk_id=walk_id, step=step, auto=True)
+
+    def _render_tween(
+        self, a: Pose | None, b: Pose, intrinsics: CameraIntrinsics
+    ) -> list[np.ndarray]:
+        """Render ``tween_frames`` interpolated RGB views between ``a`` and ``b`` (exclusive).
+
+        Lets the dashboard play the camera *gliding* from the previously shown view to
+        the current one instead of cutting between them. Empty when disabled or no motion.
+        """
+        n = self.tween_frames
+        if n <= 0 or a is None:
+            return []
+        if np.allclose(a.position, b.position) and np.allclose(a.rotation, b.rotation):
+            return []
+        frames: list[np.ndarray] = []
+        for k in range(1, n + 1):
+            p = interpolate_pose(a, b, k / (n + 1))  # interior points; endpoint b is the main view
+            frames.append(self.renderer.render(Camera(pose=p, intrinsics=intrinsics)).rgb)
+        return frames
+
+    def _commit_move(
+        self,
+        robot: Robot,
+        next_pose: Pose,
+        render: RenderResult,
+        coverage: CoverageState,
+        trail: list[Pose],
+        result: WalkResult,
+        *,
+        walk_id: str,
+        step: int,
+    ) -> None:
+        """Apply a committed move: advance the robot, record coverage/trail, maybe auto-mark."""
+        robot.move(next_pose)
+        conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
+        coverage.add_pose(next_pose, walk_id=walk_id, confidence=conf)
+        trail.append(next_pose)
+        if self.mode != "task":  # auto-marking builds the densify deliverable, not a task goal
+            self._maybe_auto_mark(robot, result, render, walk_id=walk_id, step=step)
+
+    def _seed_eye_offset(self, seed_pose: Pose) -> float | None:
+        """Height of the seed camera above its local ground (None if unavailable)."""
+        if self.height_field is None:
+            return None
+        g = self.height_field.ground(float(seed_pose.position[0]), float(seed_pose.position[2]))
+        if g is None:
+            return None
+        return float(seed_pose.position @ up_vector(self.scene.up_axis)) - g
+
+    def _follow_terrain(self, pose: Pose) -> Pose:
+        """Re-set ``pose``'s up-coordinate to local ground + this walk's eye height.
+
+        Keeps the camera a constant height above the terrain on sloped scenes. A no-op
+        when no height field is available or the ground here is unknown.
+        """
+        if self.height_field is None or self._eye_offset is None:
+            return pose
+        ground = self.height_field.ground(float(pose.position[0]), float(pose.position[2]))
+        if ground is None:
+            return pose
+        up = up_vector(self.scene.up_axis)
+        delta = (ground + self._eye_offset) - float(pose.position @ up)
+        # Terrain undulates gradually: one floor step can't change ground height by much more
+        # than a step length. A larger jump is a bad cell estimate (a sparse/edge cell, or one
+        # dominated by a wall/column/ceiling), not real slope — clamp it so the camera is never
+        # teleported off the mapped floor into the void (which reads as degenerate -> bounds).
+        max_climb = self.action_space.step
+        delta = float(np.clip(delta, -max_climb, max_climb))
+        return Pose(position=pose.position + delta * up, rotation=pose.rotation)
+
+    def _step_action(
+        self,
+        robot: Robot,
+        action: Action,
+        decision: Decision,
+        observation: Observation,
+        render: RenderResult,
+        coverage: CoverageState,
+        trail: list[Pose],
+        result: WalkResult,
+        action_history: list[str],
+        tween: list[np.ndarray],
+        *,
+        walk_id: str,
+        step: int,
+    ) -> tuple[str | None, bool, bool]:
+        """Execute one movement action, record/emit it, and run the walk-stop policies.
+
+        Returns ``(stop_reason or None, blocked, degenerate)``. ``blocked``/``degenerate``
+        both invalidate a chunked plan; ``blocked`` also drives the "wall ahead" hint.
+        """
+        action_history.append(action.value)
+        # Free distance ahead from the *current* metric render caps a forward step
+        # so the camera halts short of obstacles instead of burrowing in.
+        clearance = wall_distance_from_depth(render.depth)
+        next_pose = apply_action(
+            robot.pose, action, self.action_space, self.scene.up_axis, clearance=clearance
+        )
+        if action in (Action.FORWARD, Action.BACK):
+            next_pose = self._follow_terrain(next_pose)  # stay above local ground on slopes
+        blocked = self._forward_blocked(action, clearance)
+        novelty_next = coverage.novelty(next_pose)
+        degenerate = self._is_degenerate(next_pose, render)
+
+        ctx = WalkContext(
+            step=step, action=action, novelty=novelty_next, pose=next_pose, degenerate=degenerate
+        )
+        for p in self.walk_policies:
+            p.update(ctx)
+
+        result.steps.append(
+            WalkStep(
+                pose=next_pose,
+                action=action,
+                novelty=novelty_next,
+                degenerate=degenerate,
+                raw_text=decision.raw_text,
+                blocked=blocked,
+            )
+        )
+        if action is not Action.STOP and not degenerate and not blocked:
+            self._commit_move(
+                robot, next_pose, render, coverage, trail, result, walk_id=walk_id, step=step
+            )
+        self._emit_step(
+            walk_id,
+            step,
+            observation,
+            decision,
+            action,
+            next_pose,
+            novelty_next,
+            degenerate,
+            coverage,
+            trail,
+            blocked=blocked,
+            tween=tween,
+        )
+        return walk_stop_reason(self.walk_policies), blocked, degenerate
 
     def run_walk(
         self, seed_pose: Pose, coverage: CoverageState, *, walk_id: str = ""
@@ -212,8 +487,15 @@ class Explorer:
             WalkStep(pose=seed_pose, action=Action.STOP, novelty=novelty_seed, degenerate=False)
         )
 
+        self._eye_offset = self._seed_eye_offset(seed_pose)
+        self._carrying = False  # fresh carried-state per walk
+
         action_history: list[str] = []
         stop_reason = "step_budget"
+        prev_view_pose: Pose | None = None  # last view shown, for the live tween
+        blocked_ahead = False  # was the previous forward blocked by a wall?
+        plan: list[Action] = []  # remaining planned actions (action chunking)
+        plan_decision: Decision | None = None  # the VLM decision that produced `plan`
         for step_idx in range(self.max_steps):
             if step_idx == 0:
                 scene_description = self._describe_step(
@@ -222,6 +504,8 @@ class Explorer:
                 continue
 
             camera = robot.camera()
+            tween = self._render_tween(prev_view_pose, camera.pose, camera.intrinsics)
+            prev_view_pose = camera.pose
             cov = floor_coverage(coverage, radius=self.coverage_radius)
             observation, render = self.observation_builder.build(
                 camera,
@@ -234,85 +518,50 @@ class Explorer:
                 scene_description=scene_description,
                 marks=self._marks_total,
                 mark_target=self.mark_target,
+                blocked_ahead=blocked_ahead,
+                carrying=self._carrying,
             )
-            decision = self.vlm.act(observation)
-            action = decision.action
+            if not plan:  # action chunking: query the VLM only when the plan runs out
+                plan_decision = self.vlm.act(observation)
+                actions = plan_decision.actions or [plan_decision.action]
+                plan = list(actions)[: max(1, self.actions_per_query)]
+            assert plan_decision is not None
+            decision = plan_decision
+            action = plan.pop(0)
+            step = step_idx + 1
 
-            if action is Action.DESCRIBE:
-                scene_description = self._describe_step(
-                    robot,
-                    result,
-                    action_history,
-                    walk_id=walk_id,
-                    step=step_idx + 1,
-                    raw_text=decision.raw_text,
-                )
-                continue
-
-            if action is Action.MARK:
-                self._mark_step(
-                    robot,
-                    result,
-                    action_history,
-                    walk_id=walk_id,
-                    step=step_idx + 1,
-                    raw_text=decision.raw_text,
-                )
-                continue
-
-            action_history.append(action.value)
-            # Free distance ahead from the *current* metric render caps a forward
-            # step so the camera halts short of obstacles instead of burrowing in.
-            clearance = wall_distance_from_depth(render.depth)
-            next_pose = apply_action(
-                robot.pose, action, self.action_space, self.scene.up_axis, clearance=clearance
-            )
-            blocked = self._forward_blocked(action, clearance)
-            novelty_next = coverage.novelty(next_pose)
-            degenerate = self._is_degenerate(next_pose, render)
-
-            ctx = WalkContext(
-                step=step_idx + 1,
-                action=action,
-                novelty=novelty_next,
-                pose=next_pose,
-                degenerate=degenerate,
-            )
-            for p in self.walk_policies:
-                p.update(ctx)
-
-            result.steps.append(
-                WalkStep(
-                    pose=next_pose,
-                    action=action,
-                    novelty=novelty_next,
-                    degenerate=degenerate,
-                    raw_text=decision.raw_text,
-                    blocked=blocked,
-                )
-            )
-
-            if action is not Action.STOP and not degenerate and not blocked:
-                robot.move(next_pose)
-                conf = float(render.alpha.mean()) if render.alpha is not None else 1.0
-                coverage.add_pose(next_pose, walk_id=walk_id, confidence=conf)
-                trail.append(next_pose)
-
-            self._emit_step(
-                walk_id,
-                step_idx + 1,
-                observation,
-                decision,
+            handled, scene_description, clear_plan = self._dispatch_static(
                 action,
-                next_pose,
-                novelty_next,
-                degenerate,
+                robot,
+                result,
+                action_history,
+                scene_description,
+                walk_id=walk_id,
+                step=step,
+                raw_text=decision.raw_text,
+            )
+            if handled:
+                if clear_plan:
+                    plan = []  # re-plan with the fresh description
+                continue
+
+            reason, blocked, degenerate = self._step_action(
+                robot,
+                action,
+                decision,
+                observation,
+                render,
                 coverage,
                 trail,
-                blocked=blocked,
+                result,
+                action_history,
+                tween,
+                walk_id=walk_id,
+                step=step,
             )
-
-            reason = walk_stop_reason(self.walk_policies)
+            blocked_ahead = blocked  # surfaced in the next step's [state] to prompt an escape
+            if blocked or degenerate:
+                plan = []  # the plan is stale, re-query next step
             if reason is not None:
                 stop_reason = reason
                 break
@@ -349,6 +598,7 @@ class Explorer:
         actually launched) so the UI can report rejections.
         """
         self._marks_total = 0
+        self._mark_pos = []
         if self.event_sink is not None:
             self.event_sink(
                 SessionStartEvent(
@@ -359,6 +609,12 @@ class Explorer:
                     seed_floor=_floor_array([s.pose for s in seeds], coverage.up_axis),
                     seed_kinds=[s.kind for s in seeds],
                     requested_seeds=len(seeds) if requested_seeds is None else requested_seeds,
+                    frontier_floor=frontier_floor_positions(self.renderer),
+                    gap_floor=(
+                        self.gap_floor
+                        if self.gap_floor is not None
+                        else np.empty((0, 2), dtype=np.float64)
+                    ),
                 )
             )
 
@@ -366,7 +622,8 @@ class Explorer:
         prev_cov = floor_coverage(coverage, radius=self.coverage_radius)
         reason = "seeds_exhausted"
         for i, seed in enumerate(seeds):
-            results.append(self.run_walk(seed.pose, coverage, walk_id=f"walk{i}"))
+            walk = self.run_walk(seed.pose, coverage, walk_id=f"walk{i}")
+            results.append(walk)
             cur_cov = floor_coverage(coverage, radius=self.coverage_radius)
             gain = cur_cov - prev_cov
             prev_cov = cur_cov
@@ -375,6 +632,7 @@ class Explorer:
                 walks_completed=i + 1,
                 total_seeds=len(seeds),
                 last_batch_coverage_gain=gain,
+                last_walk_reason=walk.stop_reason,
             )
             fired = session_stop_reason(self.session_policies, ctx)
             if fired is not None:
@@ -406,6 +664,7 @@ class Explorer:
         trail: list[Pose],
         *,
         blocked: bool = False,
+        tween: list[np.ndarray] | None = None,
     ) -> None:
         if self.event_sink is None:
             return
@@ -427,6 +686,7 @@ class Explorer:
                 sampled_floor=coverage.floor_positions(),
                 trail_floor=_floor_array(trail, self.scene.up_axis),
                 blocked=blocked,
+                tween_rgb=tween or [],
             )
         )
 

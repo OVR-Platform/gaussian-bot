@@ -31,6 +31,10 @@ PAGE_HTML = """<!doctype html>
                  background: rgba(0,0,0,.3); padding: 8px; border-radius: 6px; }
   canvas#world-map { width: 100%; max-width: 460px; aspect-ratio: 1/1; border-radius: 6px;
                      background: #111; display: block; }
+  #map-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; max-width: 460px;
+                margin: 6px 0 0; font-size: 11px; color: #bbb; }
+  #map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  #map-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
   @media (max-width: 900px) {
     body { grid-template-columns: 1fr; }
     .views { grid-template-columns: 1fr; }
@@ -64,8 +68,13 @@ PAGE_HTML = """<!doctype html>
     <button onclick="refreshVLLM()" class="ghost">vLLM status</button>
   </div>
   <pre id="vllm-log">vLLM log idle</pre>
-  <h2>Task</h2>
-  <label>task prompt (optional)</label>
+  <h2>Mode &amp; task</h2>
+  <label>mode</label>
+  <select id="mode" onchange="onModeChange()">
+    <option value="densify">densify — explore to improve the reconstruction</option>
+    <option value="task">task — pursue a goal (find / fetch-and-carry)</option>
+  </select>
+  <label id="task_prompt_label">task prompt (optional)</label>
   <input id="task_prompt" placeholder="e.g. find the office door"/>
   <h2>Scene &amp; exploration</h2>
   <label>up axis</label>
@@ -107,6 +116,7 @@ PAGE_HTML = """<!doctype html>
   </div>
   <h2>Global coverage (world frame)</h2>
   <canvas id="world-map" width="600" height="600"></canvas>
+  <div id="map-legend"></div>
   <h2>Walk replay (interpolated fly-through)</h2>
   <div class="row">
     <select id="movie-walk" style="flex:2"></select>
@@ -154,12 +164,23 @@ async function loadConfig(){
   document.getElementById("pose_budget").value = c.pose_budget;
   document.getElementById("num_seeds").value = c.num_seeds;
   document.getElementById("pose_target").value = c.pose_target;
+  document.getElementById("mode").value = c.mode || "densify";
+  onModeChange();
+}
+function onModeChange(){
+  const task = document.getElementById("mode").value === "task";
+  const lbl = document.getElementById("task_prompt_label");
+  lbl.textContent = task ? "task prompt (REQUIRED — the mission)" : "task prompt (optional)";
+  document.getElementById("task_prompt").placeholder = task
+    ? "e.g. take the red box from the desk to the front door"
+    : "e.g. find the office door";
 }
 function gather(){
   const split3 = v => v.split(",").map(parseFloat);
   const splitArgs = v => v.trim() === "" ? [] : v.trim().split(/\s+/);
   const cr = document.getElementById("coverage_radius").value;
   return {
+    mode: document.getElementById("mode").value,
     task_prompt: document.getElementById("task_prompt").value || "",
     ply_path: document.getElementById("ply_path").value || null,
     vlm_base_url: document.getElementById("vlm_base_url").value,
@@ -212,10 +233,18 @@ function setStatus(t){ document.getElementById("status").textContent = t; }
 function setChips(o){ document.getElementById("chips").innerHTML =
   Object.entries(o).map(([k,v])=>`<span class="chip"><b>${k}</b> ${v}</span>`).join(""); }
 
-let SEEDS = [], SEED_KINDS = [], MARKS = [], LAST_STEP = null;
+let SEEDS = [], SEED_KINDS = [], MARKS = [], FRONTIERS = [], GAPS = [], LAST_STEP = null, CUR_WALK = null;
+let CARRIES = [], MODE = "densify";  // task mode: grab/drop pins on the map
 const seedColor = kind => (kind === "capture" ? "#f5be28" : "#e0662a");  // amber=real, orange=synthetic
 const walkIndex = wid => { const n = String(wid).match(/\\d+/); return n ? parseInt(n[0], 10) : -1; };
 const walkKind = wid => SEED_KINDS[walkIndex(wid)] || "?";
+const LEGEND_DENSIFY=[["#ff4fa3","3D gap (unseen volume — brighter = more)"],["#50c8d2","recon. frontier"],["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#39e070","current path"],["#d6201e","robot"],["#d36bff","mark — current walk"],["rgba(192,80,255,0.5)","mark — earlier walk"]];
+const LEGEND_TASK=[["#f5be28","start"],["#39e070","path"],["#d6201e","robot"],["#2ad07a","grab"],["#e0902a","drop"]];
+function renderLegend(){
+  const el=document.getElementById("map-legend"); if(!el) return;
+  const items = MODE==="task" ? LEGEND_TASK : LEGEND_DENSIFY;
+  el.innerHTML=items.map(([c,t])=>`<span><i style="background:${c}"></i>${t}</span>`).join("");
+}
 function drawWorld(ctx, sampled, trail, pose){
   if(!BOUNDS) return;
   const [a,b] = floorAxes(UP);
@@ -226,28 +255,56 @@ function drawWorld(ctx, sampled, trail, pose){
   ctx.fillStyle="#181818"; ctx.fillRect(0,0,W,H);
   ctx.strokeStyle="#666"; ctx.lineWidth=1;
   ctx.strokeRect(tx(lo[0]),ty(hi[1]),tx(hi[0])-tx(lo[0]),ty(lo[1])-ty(hi[1]));
+  // Tier-3 3D coverage gaps: occupied-but-unseen voxels projected onto the floor,
+  // shown as a concentration heatmap (brighter = more unseen volume stacked in that
+  // column — facades, multi-floor interiors, roofs). A heatmap, not per-voxel squares,
+  // so it reads as "where the uncovered mass is" instead of tiling the whole floor.
+  if(GAPS && GAPS.length){
+    const NB=36, cnt=new Float32Array(NB*NB); let mx=0;
+    const bin=(v,l,h)=>Math.min(NB-1,Math.max(0,Math.floor((v-l)/(h-l)*NB)));
+    GAPS.forEach(p=>{ const k=bin(p[1],lo[1],hi[1])*NB+bin(p[0],lo[0],hi[0]);
+      cnt[k]++; if(cnt[k]>mx) mx=cnt[k]; });
+    const cw=(W-2*pad)/NB, ch=(H-2*pad)/NB;
+    for(let j=0;j<NB;j++) for(let i=0;i<NB;i++){ const v=cnt[j*NB+i]; if(!v) continue;
+      ctx.fillStyle="rgba(255,79,163,"+(0.12+0.55*(v/mx)).toFixed(3)+")";
+      ctx.fillRect(pad+i*cw, pad+(NB-1-j)*ch, cw+0.6, ch+0.6); }
+  }
+  // reconstruction frontiers (static gaps to fill): faint cyan squares
+  ctx.fillStyle="rgba(80,200,210,0.45)";
+  (FRONTIERS||[]).forEach(p=>{ ctx.fillRect(tx(p[0])-1.5, ty(p[1])-1.5, 3, 3); });
   ctx.fillStyle="#285ad0";
   (sampled||[]).forEach(p=>{ ctx.beginPath(); ctx.arc(tx(p[0]),ty(p[1]),2,0,7); ctx.fill(); });
-  // seeds: where walks start from. Amber ring = real capture pose, orange = synthetic fallback.
-  ctx.lineWidth=2; ctx.font="9px sans-serif";
+  // seeds: where walks start from. Amber ring = real capture pose, orange = synthetic
+  // fallback; the current walk's seed gets an extra white halo.
+  const curIdx = CUR_WALK!=null ? walkIndex(CUR_WALK) : -1;
+  ctx.font="9px sans-serif";
   (SEEDS||[]).forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]); const c=seedColor(SEED_KINDS[i]);
-    ctx.strokeStyle=c; ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.stroke();
-    ctx.fillStyle=c; ctx.fillText(i, x+7, y+3); });
+    if(i===curIdx){ ctx.strokeStyle="#fff"; ctx.lineWidth=3.5; ctx.beginPath(); ctx.arc(x,y,8,0,7); ctx.stroke(); }
+    ctx.strokeStyle=c; ctx.lineWidth=2; ctx.beginPath(); ctx.arc(x,y,6,0,7); ctx.stroke();
+    ctx.fillStyle=c; ctx.fillText(i, x+9, y+3); });
+  // current walk's path: bright glowing green line (earlier walks leave only the blue
+  // visited dots, so the live path stands out as the thing happening now).
   if(trail && trail.length>1){
-    ctx.strokeStyle="#2aa846"; ctx.lineWidth=2; ctx.beginPath();
+    ctx.save(); ctx.shadowColor="rgba(57,224,112,0.9)"; ctx.shadowBlur=6;
+    ctx.strokeStyle="#39e070"; ctx.lineWidth=2.5; ctx.lineJoin="round"; ctx.beginPath();
     trail.forEach((p,i)=>{ const x=tx(p[0]),y=ty(p[1]); i?ctx.lineTo(x,y):ctx.moveTo(x,y); }); ctx.stroke();
+    ctx.restore();
   }
-  // marked fill-in poses (the deliverable): purple diamonds, drawn on top
-  ctx.fillStyle="#c050ff";
-  (MARKS||[]).forEach(p=>{ const x=tx(p[0]),y=ty(p[1]),s=5;
-    ctx.beginPath(); ctx.moveTo(x,y-s); ctx.lineTo(x+s,y); ctx.lineTo(x,y+s); ctx.lineTo(x-s,y);
-    ctx.closePath(); ctx.fill(); });
+  // marked fill-in poses (the deliverable): purple diamonds. The current walk's marks are
+  // emphasised (larger, white-ringed); earlier walks' marks are dimmed so the active path
+  // and its markers read together.
+  (MARKS||[]).forEach(mk=>{ const p=mk.p||mk, cur=mk.walk===CUR_WALK, s=cur?7:4;
+    const x=tx(p[0]),y=ty(p[1]);
+    ctx.beginPath(); ctx.moveTo(x,y-s); ctx.lineTo(x+s,y); ctx.lineTo(x,y+s); ctx.lineTo(x-s,y); ctx.closePath();
+    ctx.fillStyle=cur?"#d36bff":"rgba(192,80,255,0.30)"; ctx.fill();
+    if(cur){ ctx.strokeStyle="#fff"; ctx.lineWidth=1.5; ctx.stroke(); } });
+  // task mode: grab (green ▲) and drop (orange ▼) pins where manipulation happened.
+  (CARRIES||[]).forEach(c=>{ const x=tx(c.p[0]),y=ty(c.p[1]),s=6, up=c.kind==="grab";
+    ctx.fillStyle=up?"#2ad07a":"#e0902a"; ctx.beginPath();
+    if(up){ ctx.moveTo(x,y-s); ctx.lineTo(x+s,y+s); ctx.lineTo(x-s,y+s); }
+    else  { ctx.moveTo(x,y+s); ctx.lineTo(x+s,y-s); ctx.lineTo(x-s,y-s); }
+    ctx.closePath(); ctx.fill(); ctx.strokeStyle="#fff"; ctx.lineWidth=1; ctx.stroke(); });
   if(pose){ ctx.fillStyle="#d6201e"; ctx.beginPath(); ctx.arc(tx(pose[a]),ty(pose[b]),4,0,7); ctx.fill(); }
-  // legend
-  ctx.font="11px sans-serif"; ctx.textBaseline="middle";
-  const items=[["#285ad0","visited"],["#f5be28","seed (capture)"],["#e0662a","seed (fallback)"],["#2aa846","current trail"],["#d6201e","robot"],["#c050ff","marked (fill-in)"]];
-  items.forEach(([c,t],i)=>{ const y=14+i*16; ctx.fillStyle=c;
-    ctx.beginPath(); ctx.arc(14,y,4,0,7); ctx.fill(); ctx.fillStyle="#bbb"; ctx.fillText(t,24,y); });
   // world axis labels: horizontal = +floor axis a, vertical = +floor axis b (up axis is out of plane)
   ctx.fillStyle="#9aa"; ctx.font="12px sans-serif";
   ctx.fillText("+"+AXIS_NAME(a)+" \\u2192", W-58, H-12);
@@ -257,6 +314,16 @@ function drawWorld(ctx, sampled, trail, pose){
   ctx.textBaseline="alphabetic";
 }
 
+let rgbTimer=null;
+function playRgb(frames){
+  if(rgbTimer){ clearInterval(rgbTimer); rgbTimer=null; }
+  const img=document.getElementById("rgb");
+  if(!frames.length) return;
+  if(frames.length===1){ img.src=frames[0]; return; }
+  let i=0;
+  rgbTimer=setInterval(()=>{ img.src=frames[i++];
+    if(i>=frames.length){ clearInterval(rgbTimer); rgbTimer=null; } }, 45);
+}
 let animTimer=null;
 async function testForward(){
   if(animTimer){ clearInterval(animTimer); animTimer=null; }
@@ -308,7 +375,9 @@ async function run(endpoint){
   stream.onmessage = (e)=>{
     const m = JSON.parse(e.data);
     if(m.type==="session_start"){ BOUNDS={min:m.bounds_min,max:m.bounds_max}; UP=m.up_axis;
-      SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || []; MARKS = []; LAST_STEP = null;
+      SEEDS = m.seeds || []; SEED_KINDS = m.seed_kinds || []; MARKS = []; LAST_STEP = null; CUR_WALK = null;
+      FRONTIERS = m.frontiers || []; GAPS = m.gaps || []; CARRIES = [];
+      MODE = document.getElementById("mode").value; renderLegend();
       document.getElementById("action-log").textContent="";
       document.getElementById("scene-desc").textContent="—";
       resetMovies();
@@ -320,13 +389,23 @@ async function run(endpoint){
       const log = document.getElementById("action-log");
       log.textContent += `── ${m.walk_id} (${walkKind(m.walk_id)}) ended: ${m.reason} (${m.steps} steps) ──\n`;
       log.scrollTop = log.scrollHeight; addWalkOption(m.walk_id); return; }
-    if(m.type==="mark"){
-      MARKS.push(m.floor);
-      const tgt = num(document.getElementById("pose_target").value, 30);
+    if(m.type==="carry"){
+      CARRIES.push({p:m.floor, kind:m.kind, walk:m.walk_id}); CUR_WALK=m.walk_id;
       const log = document.getElementById("action-log");
-      log.textContent += `★ ${m.walk_id} #${m.step}: marked fill-in pose (${m.count}/${tgt})\n`;
+      log.textContent += `${m.kind==="grab"?"✋":"📦"} ${m.walk_id} #${m.step}: ${m.kind} (carrying: ${m.carrying?"yes":"no"})\n`;
       log.scrollTop = log.scrollHeight;
-      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, action:"mark", marks:`${m.count}/${tgt}`});
+      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, action:m.kind, carrying:m.carrying?"yes":"no"});
+      const ctx=document.getElementById("world-map").getContext("2d");
+      if(LAST_STEP) drawWorld(ctx, LAST_STEP.sampled, LAST_STEP.trail, LAST_STEP.pose); else drawWorld(ctx, [], [], null);
+      return; }
+    if(m.type==="mark"){
+      MARKS.push({p:m.floor, walk:m.walk_id}); CUR_WALK=m.walk_id;
+      const tgt = num(document.getElementById("pose_target").value, 30);
+      const how = m.auto ? "auto" : "vlm";
+      const log = document.getElementById("action-log");
+      log.textContent += `★ ${m.walk_id} #${m.step}: marked fill-in pose [${how}] (${m.count}/${tgt})\n`;
+      log.scrollTop = log.scrollHeight;
+      setChips({walk:`${m.walk_id} (${walkKind(m.walk_id)})`, action:`mark:${how}`, marks:`${m.count}/${tgt}`});
       const ctx=document.getElementById("world-map").getContext("2d");
       if(LAST_STEP) drawWorld(ctx, LAST_STEP.sampled, LAST_STEP.trail, LAST_STEP.pose);
       else drawWorld(ctx, [], [], null);
@@ -344,7 +423,7 @@ async function run(endpoint){
     if(m.type==="error"){ setStatus("error: "+m.message); setChips({status:"error"}); stream.close(); stream=null;
       stepping=false; document.getElementById("btn-next").disabled=true; return; }
     if(m.type==="step"){
-      if(m.panels.rgb) document.getElementById("rgb").src=m.panels.rgb;
+      if(m.panels.rgb) playRgb([...(m.tween||[]), m.panels.rgb]);
       if(m.panels.depth) document.getElementById("depth").src=m.panels.depth;
       if(m.panels.confidence) document.getElementById("confidence").src=m.panels.confidence;
       if(m.panels.map) document.getElementById("body-map").src=m.panels.map;
@@ -359,7 +438,7 @@ async function run(endpoint){
         novelty:m.novelty.toFixed(2), blocked:m.blocked?"!":"", degenerate:m.degenerate?"!":"",
         "cov(floor)":(100*m.coverage_floor).toFixed(1)+"%",
         "cov(pose)":(100*m.coverage_pose_space).toFixed(1)+"%"});
-      LAST_STEP = m;
+      LAST_STEP = m; CUR_WALK = m.walk_id;
       drawWorld(document.getElementById("world-map").getContext("2d"), m.sampled, m.trail, m.pose);
     }
   };

@@ -8,7 +8,7 @@ receives one :data:`SessionEvent` at a time.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
@@ -29,6 +29,10 @@ class SessionStartEvent:
     seed_floor: np.ndarray  # (S, 2) floor positions of the seeds walks start from
     seed_kinds: list[str]  # per-seed provenance: "capture" | "origin_fallback" | "density" | "grid"
     requested_seeds: int  # how many were asked for (may exceed total_seeds if some were rejected)
+    frontier_floor: np.ndarray  # (K, 2) reconstruction-frontier cells (static gaps to fill)
+    gap_floor: np.ndarray = field(  # (K, 2) floor-projected Tier-3 3D coverage gaps (roofs/floors)
+        default_factory=lambda: np.empty((0, 2), dtype=np.float64)
+    )
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,9 @@ class StepEvent:
     sampled_floor: np.ndarray  # (N, 2)
     trail_floor: np.ndarray  # (M, 2)
     blocked: bool = False  # a FORWARD step halted short of an obstacle (no move committed)
+    tween_rgb: list[np.ndarray] = field(
+        default_factory=list
+    )  # interpolated RGB frames into this view
 
 
 @dataclass(frozen=True)
@@ -59,6 +66,18 @@ class MarkEvent:
     step: int
     floor: np.ndarray  # (2,) floor-plane position of the marked pose
     count: int  # total marks accumulated this session so far
+    auto: bool = False  # True if the system auto-marked (vs. an explicit VLM mark)
+
+
+@dataclass(frozen=True)
+class CarryEvent:
+    """Emitted in task mode when the VLM grabs or drops the carried target (simulated)."""
+
+    walk_id: str
+    step: int
+    floor: np.ndarray  # (2,) floor-plane position where the grab/drop happened
+    kind: str  # "grab" | "drop"
+    carrying: bool  # the resulting carried-state after this action
 
 
 @dataclass(frozen=True)
@@ -89,6 +108,12 @@ class SessionEndEvent:
 
 
 SessionEvent = (
-    SessionStartEvent | StepEvent | MarkEvent | WalkEndEvent | SceneDescribeEvent | SessionEndEvent
+    SessionStartEvent
+    | StepEvent
+    | MarkEvent
+    | CarryEvent
+    | WalkEndEvent
+    | SceneDescribeEvent
+    | SessionEndEvent
 )
 EventSink = Callable[[SessionEvent], None]

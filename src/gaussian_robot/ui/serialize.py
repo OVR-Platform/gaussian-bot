@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from gaussian_robot.events import (
+    CarryEvent,
     MarkEvent,
     SceneDescribeEvent,
     SessionEndEvent,
@@ -30,6 +31,8 @@ def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return
             "requested_seeds": event.requested_seeds,
             "seeds": event.seed_floor.tolist(),
             "seed_kinds": event.seed_kinds,
+            "frontiers": event.frontier_floor.tolist(),
+            "gaps": event.gap_floor.tolist(),
         }
     if isinstance(event, StepEvent):
         panels = {label: jpeg_data_url(img) for label, img in event.observation.panels}
@@ -47,6 +50,7 @@ def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return
             "coverage_floor": event.coverage_floor,
             "coverage_pose_space": event.coverage_pose_space,
             "panels": panels,
+            "tween": [jpeg_data_url(f) for f in event.tween_rgb],
             "sampled": event.sampled_floor.tolist(),
             "trail": event.trail_floor.tolist(),
         }
@@ -57,6 +61,16 @@ def event_to_message(event: Any) -> dict[str, Any]:  # noqa: PLR0911 (one return
             "step": event.step,
             "floor": event.floor.tolist(),
             "count": event.count,
+            "auto": event.auto,
+        }
+    if isinstance(event, CarryEvent):
+        return {
+            "type": "carry",
+            "walk_id": event.walk_id,
+            "step": event.step,
+            "floor": event.floor.tolist(),
+            "kind": event.kind,
+            "carrying": event.carrying,
         }
     if isinstance(event, WalkEndEvent):
         return {

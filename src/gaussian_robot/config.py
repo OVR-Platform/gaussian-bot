@@ -19,6 +19,16 @@ DEFAULT_CONFIG_PATH = Path("data/ui_config.json")
 class RunConfig(BaseModel):
     """All inputs needed to build and run an exploration session."""
 
+    mode: str = Field(
+        default="densify",
+        description=(
+            "Mission mode. 'densify': explore to find under-reconstructed regions and "
+            "propose fill-in camera poses (coverage-driven). 'task': pursue the goal in "
+            "task_prompt (navigate to / find / fetch-and-carry), using grab/drop actions and "
+            "stopping when the VLM declares the task done. Both share the renderer, VLM, "
+            "controller and UI; only the prompt, stop criteria and deliverable differ."
+        ),
+    )
     ply_path: str | None = Field(default=None, description="Path to the .ply/.splat scene.")
     poses_path: str | None = Field(
         default=None,
@@ -71,6 +81,13 @@ class RunConfig(BaseModel):
     max_steps: int = Field(
         default=120, ge=1, description="Max steps per walk. Higher = longer, deeper walks."
     )
+    actions_per_query: int = Field(
+        default=4,
+        ge=1,
+        description="Action chunking: max actions the VLM plans per query. The plan runs "
+        "step-by-step and is re-queried when exhausted or interrupted (blocked / degenerate / "
+        "describe). Higher = fewer VLM calls/tokens, less reactive. 1 = decide every step.",
+    )
     pose_budget: int = Field(default=400, ge=1)
     pose_target: int = Field(
         default=30,
@@ -81,6 +98,31 @@ class RunConfig(BaseModel):
         default=3,
         ge=1,
         description="Number of walk seeds. Fewer = budget spent exploring deeply, not restarting.",
+    )
+    coverage_3d: bool = Field(
+        default=True,
+        description="Build a Tier-3 3D coverage grid (voxel occupancy + capture-camera "
+        "frustum raycast) to find occupied-but-unseen regions (roofs/floors/behind-buildings) "
+        "and aim the aerial survey at them. Falls back to tallest-geometry when off/unavailable.",
+    )
+    aerial_survey: bool = Field(
+        default=True,
+        description="Add one extra walk that starts high above the tallest geometry looking "
+        "down, to survey rooftops/upper structure that ground-level walks never reach.",
+    )
+    terrain_follow: bool = Field(
+        default=True,
+        description="Keep the camera at a constant eye-height above local ground on "
+        "non-flat scenes (uses a one-time gaussian height field). Disable for flat scenes.",
+    )
+    live_tween_frames: int = Field(
+        default=0,
+        ge=0,
+        description="Interpolated RGB frames rendered between views to smooth the live "
+        "dashboard motion. 0 disables (default: each frame is an extra GPU render per step, "
+        "the biggest per-step cost after the VLM). The on-demand walk-replay fly-through "
+        "interpolates independently, so smoothing is kept where it matters. Raise for a "
+        "smoother live view at the cost of speed.",
     )
     map_size: int = Field(default=512, ge=64)
     map_span: float | None = Field(
@@ -117,6 +159,14 @@ class RunConfig(BaseModel):
         ge=0,
         description="Max conversation turns kept for multi-turn VLM history. 0 = stateless.",
     )
+
+    @field_validator("mode")
+    @classmethod
+    def _check_mode(cls, v: str) -> str:
+        s = v.strip().lower()
+        if s not in ("densify", "task"):
+            raise ValueError("mode must be 'densify' or 'task'")
+        return s
 
     @field_validator("up_axis")
     @classmethod

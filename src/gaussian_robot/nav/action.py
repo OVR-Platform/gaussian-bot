@@ -28,6 +28,8 @@ class Action(StrEnum):
     MOVE_DOWN = "move_down"
     DESCRIBE = "describe"
     MARK = "mark"
+    GRAB = "grab"  # task mode: simulated pick-up of the target at the current pose (no motion)
+    DROP = "drop"  # task mode: simulated release of the carried target (no motion)
     STOP = "stop"
 
     @classmethod
@@ -68,7 +70,7 @@ class ActionSpace:
 
 
 def capped_forward_step(
-    step: float, clearance: float | None, *, margin_factor: float = 0.5
+    step: float, clearance: float | None, *, margin_factor: float = 0.3
 ) -> float:
     """Shorten a forward ``step`` so it stops short of an obstacle at ``clearance``.
 
@@ -100,6 +102,33 @@ def _rotation_about_axis(axis: np.ndarray, angle: float) -> np.ndarray:
     )
 
 
+def slerp_rotation(r0: np.ndarray, r1: np.ndarray, t: float) -> np.ndarray:
+    """Geodesic interpolation between two world->camera rotations (SO(3) slerp).
+
+    Uses the same world-frame composition as :func:`apply_action` (``R = Rw @ R0``):
+    the relative world rotation ``r1 @ r0.T`` is reduced to axis-angle and applied by
+    a fraction ``t``. Robust for the small rotations a walk/tween makes.
+    """
+    rel = r1 @ r0.T
+    cos = float(np.clip((np.trace(rel) - 1.0) / 2.0, -1.0, 1.0))
+    theta = float(np.arccos(cos))
+    if theta < 1e-6:
+        return r0.copy()
+    axis = np.array(
+        [rel[2, 1] - rel[1, 2], rel[0, 2] - rel[2, 0], rel[1, 0] - rel[0, 1]], dtype=np.float64
+    ) / (2.0 * np.sin(theta))
+    out: np.ndarray = _rotation_about_axis(axis, t * theta) @ r0
+    return out
+
+
+def interpolate_pose(a: Pose, b: Pose, t: float) -> Pose:
+    """Pose between ``a`` and ``b``: linear position, slerped orientation."""
+    return Pose(
+        position=a.position * (1 - t) + b.position * t,
+        rotation=slerp_rotation(a.rotation, b.rotation, t),
+    )
+
+
 def apply_action(
     pose: Pose,
     action: Action,
@@ -118,8 +147,10 @@ def apply_action(
     the camera stops short of obstacles instead of penetrating geometry. It does
     not affect ``BACK`` (rear clearance is unknown).
     """
-    if action in (Action.STOP, Action.DESCRIBE, Action.MARK):
-        return pose  # MARK records the current viewpoint; it does not move the robot
+    if action in (Action.STOP, Action.DESCRIBE, Action.MARK, Action.GRAB, Action.DROP):
+        # MARK records the current viewpoint; GRAB/DROP are simulated manipulation that
+        # only toggles the carried-payload state. None of these move the robot.
+        return pose
 
     if action in (Action.FORWARD, Action.BACK):
         heading = pose.heading(up_axis)

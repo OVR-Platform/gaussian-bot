@@ -8,12 +8,20 @@ from itertools import cycle
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from gaussian_robot.events import MarkEvent, SessionEndEvent, SessionStartEvent, WalkEndEvent
+from gaussian_robot.events import (
+    CarryEvent,
+    MarkEvent,
+    SessionEndEvent,
+    SessionStartEvent,
+    WalkEndEvent,
+)
 from gaussian_robot.metrics.coverage import CoverageState
 from gaussian_robot.nav.action import Action, ActionSpace
-from gaussian_robot.nav.explorer import Explorer, SeedPose
+from gaussian_robot.nav.explorer import Explorer, SeedPose, WalkResult
 from gaussian_robot.nav.observation import ObservationBuilder
+from gaussian_robot.nav.robot import Robot
 from gaussian_robot.nav.stop import (
     CoveragePlateau,
     CoverageTarget,
@@ -21,11 +29,14 @@ from gaussian_robot.nav.stop import (
     SeedExhaustion,
     SessionStopPolicy,
     StopPolicy,
+    TaskComplete,
+    TaskStop,
 )
+from gaussian_robot.nav.terrain import build_height_field
 from gaussian_robot.render.base import Renderer, RenderResult
 from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose
 from gaussian_robot.splat.scene import SceneBounds, SplatScene
-from gaussian_robot.vlm.client import Decision
+from gaussian_robot.vlm.client import Decision, VLMClient
 from gaussian_robot.vlm.observation import Observation
 
 _BOUNDS = (np.zeros(3), np.array([10.0, 10.0, 10.0]))
@@ -79,21 +90,23 @@ def _explorer(
     session_policies: list[SessionStopPolicy] | None = None,
     max_steps: int = 5,
     depth_value: float = 5.0,
+    vlm: VLMClient | None = None,
+    actions_per_query: int = 1,
 ) -> Explorer:
     renderer = FakeRenderer(depth_value=depth_value)
-    vlm = ScriptedVLM(actions)
     space = ActionSpace(step=1.0)
     builder = ObservationBuilder(renderer=renderer, up_axis="y", map_size=64)
     return Explorer(
         scene=_scene(),
         renderer=renderer,
-        vlm=vlm,
+        vlm=vlm or ScriptedVLM(actions),
         observation_builder=builder,
         action_space=space,
         coverage_radius=1.0,
         walk_policies=walk_policies or [],
         session_policies=session_policies or [],
         max_steps=max_steps,
+        actions_per_query=actions_per_query,
     )
 
 
@@ -137,6 +150,49 @@ def test_session_runs_all_seeds_until_exhaustion() -> None:
     ]
     results = explorer.run_session(seeds, _state())
     assert len(results) == 2
+
+
+def _task_explorer(actions: list[Action], *, max_steps: int = 8) -> Explorer:
+    explorer = _explorer(actions, walk_policies=[TaskStop()], max_steps=max_steps)
+    explorer.mode = "task"
+    explorer.observation_builder.mode = "task"
+    explorer.observation_builder.task = "fetch the box and bring it to the door"
+    return explorer
+
+
+def test_task_grab_drop_toggles_carrying_and_emits_events() -> None:
+    events: list[object] = []
+    explorer = _task_explorer([Action.GRAB, Action.FORWARD, Action.DROP, Action.STOP])
+    explorer.event_sink = events.append
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), _state(), walk_id="walk0")
+    carries = [e for e in events if isinstance(e, CarryEvent)]
+    assert [c.kind for c in carries] == ["grab", "drop"]
+    assert carries[0].carrying is True and carries[1].carrying is False  # grab then release
+    assert result.stop_reason == "task_complete"  # STOP is authoritative in task mode
+    assert not explorer._carrying  # ended not carrying (dropped before stopping)
+
+
+def test_task_stop_is_immediate_unlike_densify() -> None:
+    # In task mode a single STOP ends the walk at once (TaskStop), not a demoted plateau vote.
+    explorer = _task_explorer([Action.STOP], max_steps=20)
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), _state(), walk_id="w")
+    assert result.stop_reason == "task_complete"
+    assert len(result.steps) <= 3  # seed + describe + the stop
+
+
+def test_task_mode_does_not_auto_mark() -> None:
+    explorer = _task_explorer([Action.FORWARD], max_steps=4)
+    result = explorer.run_walk(Pose(position=np.array([5.0, 0.0, 5.0])), _state(), walk_id="w")
+    assert result.marks == []  # densify auto-marking is off in task mode
+
+
+def test_task_complete_ends_session() -> None:
+    policy = TaskComplete()
+    from gaussian_robot.nav.stop import SessionContext  # noqa: PLC0415
+
+    state = _state()
+    assert policy.should_stop(SessionContext(state, 1, 1, last_walk_reason="task_complete"))
+    assert not policy.should_stop(SessionContext(state, 1, 1, last_walk_reason="stuck"))
 
 
 def test_session_stops_on_pose_budget() -> None:
@@ -211,6 +267,7 @@ def test_blocked_forward_does_not_accumulate_coverage() -> None:
 def test_session_end_reason_is_specific() -> None:
     events: list[object] = []
     explorer = _explorer([Action.FORWARD], session_policies=[SeedExhaustion()], max_steps=2)
+    explorer.gap_floor = np.array([[2.0, 3.0], [4.0, 5.0]])  # Tier-3 3D gaps surfaced to the UI
     explorer.event_sink = events.append
     seeds = [
         SeedPose(pose=Pose(position=np.array([1.0, 0.0, 1.0])), kind="capture"),
@@ -223,6 +280,7 @@ def test_session_end_reason_is_specific() -> None:
     assert start.seed_floor.shape == (2, 2)  # both seeds' floor positions surfaced
     assert start.seed_kinds == ["capture", "origin_fallback"]  # provenance surfaced
     assert start.total_seeds == 2 and start.requested_seeds == 4  # rejections visible
+    assert start.gap_floor.shape == (2, 2)  # 3D coverage gaps carried through to the event
 
 
 def test_mark_records_pose_and_emits_event_without_moving() -> None:
@@ -235,6 +293,132 @@ def test_mark_records_pose_and_emits_event_without_moving() -> None:
     marks = [e for e in events if isinstance(e, MarkEvent)]
     assert marks and marks[0].walk_id == "walk0" and marks[0].count == 1
     assert len(state) == 1  # mark neither moves the robot nor adds coverage
+
+
+def _render(alpha_mean: float) -> RenderResult:
+    n = 8
+    return RenderResult(
+        rgb=np.zeros((n, n, 3), dtype=np.uint8),
+        camera=Camera(pose=Pose(), intrinsics=_INTR),
+        depth=np.full((n, n), 5.0, dtype=np.float32),
+        alpha=np.full((n, n), alpha_mean, dtype=np.float32),
+    )
+
+
+def test_auto_mark_records_when_standing_in_a_frontier() -> None:
+    explorer = _explorer([Action.STOP])  # coverage_radius = 1.0
+    explorer.observation_builder.nearest_gap = lambda pose: (1.0, 80.0)  # type: ignore[method-assign]
+    events: list[object] = []
+    explorer.event_sink = events.append
+    result = WalkResult(walk_id="walk0")
+    robot = Robot(scene=_scene(), pose=Pose(position=np.array([5.0, 0.0, 5.0])))
+    # at a frontier -> marked even with an empty (sky) view and facing irrelevant
+    explorer._maybe_auto_mark(robot, result, _render(0.0), walk_id="walk0", step=3)
+    assert len(result.marks) == 1
+    auto = [e for e in events if isinstance(e, MarkEvent) and e.auto]
+    assert auto and auto[0].count == 1
+
+
+def test_auto_mark_records_a_view_with_geometry_along_the_trail() -> None:
+    explorer = _explorer([Action.STOP])
+    explorer.observation_builder.nearest_gap = lambda pose: (50.0, 0.0)  # type: ignore[method-assign]
+    result = WalkResult(walk_id="walk0")
+    robot = Robot(scene=_scene(), pose=Pose(position=np.array([5.0, 0.0, 5.0])))
+    explorer._maybe_auto_mark(robot, result, _render(0.6), walk_id="walk0", step=1)  # solid view
+    assert len(result.marks) == 1
+
+
+def test_auto_mark_skips_empty_view_away_from_frontiers() -> None:
+    explorer = _explorer([Action.STOP])
+    explorer.observation_builder.nearest_gap = lambda pose: (50.0, 0.0)  # type: ignore[method-assign]
+    result = WalkResult(walk_id="walk0")
+    robot = Robot(scene=_scene(), pose=Pose())
+    explorer._maybe_auto_mark(robot, result, _render(0.05), walk_id="walk0", step=1)  # near-empty
+    assert not result.marks
+
+
+@dataclass
+class PlanVLM:
+    """Returns a fixed multi-action plan each query; counts how often it is queried."""
+
+    plan: list[Action]
+    calls: int = 0
+
+    def reset(self) -> None:
+        pass  # keep `calls` across the walk so the test can count queries
+
+    def act(self, observation: Observation) -> Decision:
+        self.calls += 1
+        return Decision(action=self.plan[0], raw_text="plan", actions=list(self.plan))
+
+    def describe(self, observation: Observation) -> str:
+        return "desc"
+
+
+def test_action_chunking_executes_plan_with_one_query() -> None:
+    vlm = PlanVLM(plan=[Action.FORWARD, Action.FORWARD, Action.FORWARD])
+    explorer = _explorer([], vlm=vlm, actions_per_query=3, max_steps=4)
+    state = _state()
+    result = explorer.run_walk(Pose(), state, walk_id="w")
+    forwards = [s for s in result.steps if s.action is Action.FORWARD]
+    assert len(forwards) == 3  # step0 describe, then 3 planned forwards
+    assert vlm.calls == 1  # the whole 3-action plan came from a single query
+
+
+def test_action_chunking_requeries_when_plan_exhausted() -> None:
+    vlm = PlanVLM(plan=[Action.FORWARD, Action.FORWARD])
+    explorer = _explorer([], vlm=vlm, actions_per_query=2, max_steps=7)
+    explorer.run_walk(Pose(), _state(), walk_id="w")
+    # step0 describe, then 6 forwards executed in plans of 2 -> 3 queries
+    assert vlm.calls == 3
+
+
+def test_marks_are_deduped_by_coverage_radius() -> None:
+    explorer = _explorer([Action.STOP])  # coverage_radius = 1.0
+    result = WalkResult(walk_id="w")
+    assert explorer._record_mark(
+        Pose(position=np.array([5.0, 0.0, 5.0])), result, walk_id="w", step=1, auto=False
+    )
+    # a second mark within the coverage radius of the first is skipped
+    assert not explorer._record_mark(
+        Pose(position=np.array([5.3, 0.0, 5.0])), result, walk_id="w", step=2, auto=True
+    )
+    assert len(result.marks) == 1
+    # but an aerial mark directly above (height diff > coverage radius) is kept
+    assert explorer._record_mark(
+        Pose(position=np.array([5.0, 3.0, 5.0])), result, walk_id="w", step=3, auto=True
+    )
+    assert len(result.marks) == 2
+
+
+# Six gaussians in cell (5,5) so it clears the height-field support threshold (min_count=4).
+_GROUND_MEANS = np.array([[5.0, float(h), 5.0] for h in (0, 0, 1, 1, 2, 2)])
+
+
+def test_follow_terrain_sets_camera_above_local_ground() -> None:
+    hf = build_height_field(_GROUND_MEANS, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
+    explorer = _explorer([Action.STOP])  # action_space.step == 1.0
+    explorer.height_field = hf
+    explorer._eye_offset = 1.5
+    ground = hf.ground(5.0, 5.0)
+    assert ground is not None
+    # Start within one step of the target so the bounded correction pins it exactly.
+    adjusted = explorer._follow_terrain(Pose(position=np.array([5.0, ground + 1.7, 5.0])))
+    assert adjusted.position[1] == pytest.approx(ground + 1.5)  # up-coord pinned to ground+eye
+    assert np.allclose(adjusted.position[[0, 2]], [5.0, 5.0])  # floor position unchanged
+
+
+def test_follow_terrain_clamps_a_large_vertical_jump() -> None:
+    # A bad edge/sparse cell would otherwise teleport the camera vertically (the observed
+    # forward y -2.0 -> 1.1 bug). One step may only correct by ~one step length.
+    hf = build_height_field(_GROUND_MEANS, "y", _BOUNDS[0], _BOUNDS[1], grid_size=8, ground_q=0.2)
+    explorer = _explorer([Action.STOP])  # action_space.step == 1.0
+    explorer.height_field = hf
+    explorer._eye_offset = 1.5
+    ground = hf.ground(5.0, 5.0)
+    assert ground is not None
+    adjusted = explorer._follow_terrain(Pose(position=np.array([5.0, 9.0, 5.0])))
+    assert adjusted.position[1] == pytest.approx(8.0)  # 9.0 - step, not teleported to ground+eye
 
 
 def test_render_is_runtime_checkable() -> None:
