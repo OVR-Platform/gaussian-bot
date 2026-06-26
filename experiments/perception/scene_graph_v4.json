@@ -1,0 +1,153 @@
+{
+ "scene_id": "ufficio360",
+ "up_axis": "-y",
+ "schema_version": 1,
+ "provenance": {
+  "perception": "probe_v4_annotate_photos (real mapping images)"
+ },
+ "objects": [
+  {
+   "id": "obj_00",
+   "label": "white column",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -1.29,
+    -1.46,
+    0.43
+   ]
+  },
+  {
+   "id": "obj_01",
+   "label": "Banner",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    3.02,
+    -1.21,
+    4.48
+   ]
+  },
+  {
+   "id": "obj_02",
+   "label": "door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    4.51,
+    -1.37,
+    -0.35
+   ]
+  },
+  {
+   "id": "obj_03",
+   "label": "gray wall surface",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -2.03,
+    -2.79,
+    0.71
+   ]
+  },
+  {
+   "id": "obj_04",
+   "label": "ceiling tiles",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -1.1,
+    -2.9,
+    1.12
+   ]
+  },
+  {
+   "id": "obj_05",
+   "label": "frosted glass door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    3.8,
+    -1.02,
+    1.51
+   ]
+  },
+  {
+   "id": "obj_06",
+   "label": "ceiling tile",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -1.67,
+    -2.81,
+    -1.41
+   ]
+  },
+  {
+   "id": "obj_07",
+   "label": "ceiling tiles",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -1.78,
+    -2.79,
+    -2.03
+   ]
+  },
+  {
+   "id": "obj_08",
+   "label": "wooden door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    1.09,
+    -0.93,
+    -4.68
+   ]
+  },
+  {
+   "id": "obj_09",
+   "label": "ventilation grille",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    -2.24,
+    -2.85,
+    -1.0
+   ]
+  },
+  {
+   "id": "obj_10",
+   "label": "wooden door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    5.55,
+    -0.91,
+    -4.5
+   ]
+  },
+  {
+   "id": "obj_11",
+   "label": "ceiling",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    8.94,
+    -3.15,
+    -2.35
+   ]
+  },
+  {
+   "id": "obj_12",
+   "label": "door mat",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    8.7,
+    0.09,
+    -0.11
+   ]
+  }
+ ]
+}
