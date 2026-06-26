@@ -415,9 +415,13 @@ def look_at(origin: np.ndarray, target: np.ndarray, up_axis: str) -> np.ndarray:
         forward[_floor_axes(up_axis)[1]] = 1.0
     else:
         forward = forward / fn
-    right = np.cross(up, forward)
+    # [right, down, forward] must be a proper (det +1) rotation, else the render is mirrored.
+    # right = forward × up (not up × forward) and down = forward × right give a right-handed
+    # basis that is also upright (down ≈ -up); the swapped order is a reflection (det −1).
+    right = np.cross(forward, up)
     right /= np.linalg.norm(right)
-    down = np.cross(right, forward)
+    down = np.cross(forward, right)
+    down /= np.linalg.norm(down)
     return np.stack([right, down, forward], axis=0)
 
 
