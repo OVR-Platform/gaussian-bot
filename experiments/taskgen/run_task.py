@@ -1,9 +1,10 @@
 """Run one generated task headless in task-mode, record the run, and auto-eval it.
 
-Closes the loop end-to-end: drives a real task-mode walk (the VLM navigates by vision, steered
-by a privileged TARGET bearing that follows an A* path around obstacles), captures the run, and
-scores it against the scene ground truth. Stop-on-arrival ends the walk when the goal is reached
-so demos are clean. Importable as run_one() for batch generation.
+A phased teacher drives the episode with ground-truth gating so demos are clean:
+  - goto/find: one leg to the target; STOP exactly on arrival.
+  - fetch_carry: leg 1 to the target -> GRAB, re-plan, leg 2 to the destination -> DROP -> STOP.
+The VLM navigates each step (premature stops overridden with a bearing step); the teacher only
+injects grab/drop/stop at the geometrically-verified moments and switches the steering cue.
 
 Run:  uv run python experiments/taskgen/run_task.py [task_index] [--oracle] [--direct]
 """
@@ -25,8 +26,10 @@ from gaussian_robot.session import build_session
 from gaussian_robot.vlm.client import Decision
 
 HERE = Path(__file__).parent
-MAX_STEPS = 80
-STOP_REACH = 1.0  # m: auto-stop when within this floor distance of the final target (< eval 1.2)
+MAX_STEPS = 90  # goto/find; fetch_carry gets more (two legs) via run_one
+FETCH_STEPS = 150
+REACH_GOTO = 1.0  # < eval EPS_REACH 1.2
+REACH_GRASP = 0.7  # < eval EPS_GRASP 0.8
 
 
 def _bearing_action(prompt: str) -> Decision:
@@ -56,24 +59,26 @@ class OracleNav:
     def act(self, observation: object) -> Decision:
         text = observation.prompt  # type: ignore[attr-defined]
         m = re.search(r"TARGET .*?([\d.]+)m", text)
-        if m and float(m.group(1)) <= STOP_REACH:
+        if m and float(m.group(1)) <= REACH_GOTO:
             return Decision(action=Action.STOP, raw_text="oracle:arrived")
         return _bearing_action(text)
 
 
-class StopWhenArrived:
-    """Wrap the VLM with ground-truth termination gating, for clean demos (goto/find).
+class PhasedTeacher:
+    """Ground-truth gated teacher over legs; injects grab/drop/stop, VLM drives the rest.
 
-    We know the target's true position, so: force STOP exactly when within reach (no overshoot),
-    and OVERRIDE a premature VLM ``stop`` (it often declares "arrived" early) with a bearing step
-    so the episode runs until the goal is really reached. The VLM still drives every other step.
+    ``legs`` = [{"goal": (3,), "action": Action, "reach": m}]. On geometric arrival at a leg's
+    goal, performs its action: STOP ends the run; GRAB/DROP advances to the next leg (re-planning
+    the route to it) and the steering cue switches. A premature VLM stop is replaced with a
+    bearing step so the episode only ends when the goal is really reached.
     """
 
-    def __init__(self, inner: object, is_final, *, reach: float, enabled: bool) -> None:
+    def __init__(self, inner: object, ctx: dict, legs: list[dict], replan, aim) -> None:
         self.inner = inner
-        self.is_final = is_final
-        self.reach = reach
-        self.enabled = enabled
+        self.ctx = ctx
+        self.legs = legs
+        self.replan = replan
+        self.aim = aim
 
     def reset(self) -> None:
         self.inner.reset()  # type: ignore[attr-defined]
@@ -82,16 +87,24 @@ class StopWhenArrived:
         return self.inner.describe(o)  # type: ignore[attr-defined]
 
     def act(self, observation: object) -> Decision:
-        prompt = observation.prompt  # type: ignore[attr-defined]
-        if not self.enabled:
-            return self.inner.act(observation)  # type: ignore[attr-defined]
-        m = re.search(r"TARGET .*?([\d.]+)m", prompt)
-        arrived = self.is_final() and m is not None and float(m.group(1)) <= self.reach
+        ph = self.ctx["phase"]
+        if ph >= len(self.legs):
+            return Decision(action=Action.STOP, raw_text="done")
+        leg = self.legs[ph]
+        gf = floor_xy(leg["goal"], self.ctx["ua"])[0]
+        dist = float(np.linalg.norm(floor_xy(self.ctx["pos"], self.ctx["ua"])[0] - gf))
+        arrived = self.ctx["i"] >= len(self.ctx["waypoints"]) and dist <= leg["reach"]
         if arrived:
-            return Decision(action=Action.STOP, raw_text="arrived")
+            if leg["action"] is Action.STOP:
+                return Decision(action=Action.STOP, raw_text="arrived")
+            self.ctx["phase"] = ph + 1  # grab/drop: advance to next leg
+            if self.ctx["phase"] < len(self.legs):
+                self.replan(self.legs[self.ctx["phase"]]["goal"])
+                self.aim()
+            return Decision(action=leg["action"], raw_text=f"teacher:{leg['action'].value}")
         dec = self.inner.act(observation)  # type: ignore[attr-defined]
-        if dec.action is Action.STOP:  # VLM quit early — not arrived yet, keep going
-            return _bearing_action(prompt)
+        if dec.action in (Action.STOP, Action.GRAB, Action.DROP):
+            return _bearing_action(observation.prompt)  # we own termination/manipulation
         return dec
 
 
@@ -103,6 +116,9 @@ def run_one(pick: int, *, oracle: bool = False, direct: bool = False,
     graph = json.loads((HERE / "scene_graph.json").read_text())
     objs = {o["id"]: o for o in graph["objects"]}
     target_c = np.asarray(objs[task["target"]]["center"])
+    dest_c = np.asarray(objs[task["destination"]]["center"]) if task.get("destination") else None
+    if task["type"] == "fetch_carry" and max_steps == MAX_STEPS:
+        max_steps = FETCH_STEPS  # two legs (to target, then to destination) need more budget
 
     cfg = load_config().overrides(
         {"mode": "task", "task_prompt": task["instruction"], "use_real_vlm": True,
@@ -110,52 +126,57 @@ def run_one(pick: int, *, oracle: bool = False, direct: bool = False,
     )
     explorer, seeds, coverage = build_session(cfg)
     builder = explorer.observation_builder
-    builder.task_target = target_c
     ua = builder.up_axis
+    means = np.asarray(explorer.renderer.cloud.means.detach().cpu())  # type: ignore[attr-defined]
 
-    waypoints: list[np.ndarray] = []
-    if not direct:
-        from floor_planner import plan  # noqa: PLC0415
+    from floor_planner import plan  # noqa: PLC0415
 
-        means = np.asarray(explorer.renderer.cloud.means.detach().cpu())  # type: ignore[attr-defined]
-        tgt_floor = floor_xy(target_c, ua)[0]
-        waypoints = plan(means, ua, floor_xy(seeds[0].pose.position, ua)[0], tgt_floor)
-        if waypoints and float(np.linalg.norm(waypoints[-1] - tgt_floor)) > 0.3:
-            waypoints.append(tgt_floor)  # final approach aims at the object, not the A* cell
+    ctx = {"phase": 0, "waypoints": [], "i": 0, "pos": np.asarray(seeds[0].pose.position), "ua": ua}
 
-    wp_state = {"i": 0}
+    def replan(goal: np.ndarray) -> None:
+        gf = floor_xy(goal, ua)[0]
+        wps = [] if direct else plan(means, ua, floor_xy(ctx["pos"], ua)[0], gf)
+        if not direct and (not wps or float(np.linalg.norm(wps[-1] - gf)) > 0.3):
+            wps.append(gf)
+        ctx["waypoints"] = wps
+        ctx["i"] = 0
 
-    def is_final() -> bool:
-        return not waypoints or wp_state["i"] >= len(waypoints)
+    # legs: goto/find -> reach target then STOP; fetch_carry -> GRAB at target, DROP at destination.
+    if task["type"] == "fetch_carry" and dest_c is not None:
+        legs = [{"goal": target_c, "action": Action.GRAB, "reach": REACH_GRASP},
+                {"goal": dest_c, "action": Action.DROP, "reach": REACH_GRASP}]
+    else:
+        legs = [{"goal": target_c, "action": Action.STOP, "reach": REACH_GOTO}]
+
+    def aim() -> None:
+        goal = legs[min(ctx["phase"], len(legs) - 1)]["goal"]
+        if ctx["i"] >= len(ctx["waypoints"]):
+            builder.task_target = goal
+            return
+        wp = ctx["waypoints"][ctx["i"]]
+        builder.task_target = np.array([wp[0], goal[1], wp[1]])
+
+    replan(legs[0]["goal"])
+    aim()
 
     if oracle:
         explorer.vlm = OracleNav()
     else:
-        explorer.vlm = StopWhenArrived(  # type: ignore[assignment]
-            explorer.vlm, is_final, reach=STOP_REACH, enabled=task["type"] in ("goto", "find")
-        )
-    explorer.actions_per_query = 1  # re-decide each step so stop-on-arrival fires promptly
+        explorer.vlm = PhasedTeacher(explorer.vlm, ctx, legs, replan, aim)  # type: ignore[assignment]
+    explorer.actions_per_query = 1
 
     run: dict = {"task_id": task["task_id"], "trajectory": [], "forwards": [],
-                 "grabs": [], "drops": [], "waypoints": [w.tolist() for w in waypoints]}
-
-    def aim() -> None:
-        if is_final():
-            builder.task_target = target_c
-            return
-        wp = waypoints[wp_state["i"]]
-        builder.task_target = np.array([wp[0], target_c[1], wp[1]])
-
-    aim()
+                 "grabs": [], "drops": [], "waypoints": [w.tolist() for w in ctx["waypoints"]]}
 
     def sink(ev: object) -> None:
         if isinstance(ev, StepEvent):
+            ctx["pos"] = np.asarray(ev.pose.position)
             run["trajectory"].append([float(x) for x in ev.pose.position])
             run["forwards"].append([float(x) for x in viewing_direction(ev.pose.rotation)])
-            if waypoints and wp_state["i"] < len(waypoints):
+            if ctx["i"] < len(ctx["waypoints"]):  # advance waypoint when reached
                 cur = floor_xy(ev.pose.position, ua)[0]
-                if float(np.linalg.norm(cur - waypoints[wp_state["i"]])) < 0.9:
-                    wp_state["i"] += 1
+                if float(np.linalg.norm(cur - ctx["waypoints"][ctx["i"]])) < 0.9:
+                    ctx["i"] += 1
                 aim()
         elif isinstance(ev, CarryEvent):
             (run["grabs"] if ev.kind == "grab" else run["drops"]).append(

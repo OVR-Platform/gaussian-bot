@@ -85,6 +85,14 @@ def main() -> None:
                 d.ellipse([px[0] - 2, px[1] - 2, px[0] + 2, px[1] + 2], outline=(220, 200, 60))
         if k > 0:  # actual path so far
             d.line([to_px(q) for q in traj_f[: k + 1]], fill=(60, 200, 230), width=2)
+        for gx in run.get("grabs", []):  # grab locations (green ✋)
+            px = to_px(np.asarray(gx))
+            d.line([px[0] - 6, px[1], px[0] + 6, px[1]], fill=(80, 240, 120), width=3)
+            d.line([px[0], px[1] - 6, px[0], px[1] + 6], fill=(80, 240, 120), width=3)
+        for dx in run.get("drops", []):  # drop locations (orange)
+            px = to_px(np.asarray(dx))
+            d.line([px[0] - 6, px[1], px[0] + 6, px[1]], fill=(230, 150, 50), width=3)
+            d.line([px[0], px[1] - 6, px[0], px[1] + 6], fill=(230, 150, 50), width=3)
         cx, cy = to_px(traj_f[k])  # current pose + heading
         ff = floor_xy(f, UP)[0]
         nf = np.linalg.norm(ff)
