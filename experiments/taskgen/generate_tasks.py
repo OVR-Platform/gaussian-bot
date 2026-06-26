@@ -23,14 +23,24 @@ MODEL = "Qwen/Qwen3.5-9B"
 N_TASKS = 12
 
 # Labels that are fixed architecture — valid as goto/find landmarks and as destinations,
-# but NOT pickup targets for fetch_carry (you can't carry a wall).
-FIXED = ("wall", "floor", "ceiling", "column", "door", "window", "partition", "staircase",
-         "blinds", "panel", "grille", "tile", "frame", "desk surface", "desk leg", "monitor",
-         "light fixture", "exit sign")
+_PERVASIVE = {"floor", "wall", "ceiling"}  # surface types with no single meaningful location
+# Fallback ONLY when perception did not tag manipulability: a coarse label heuristic. Prefer the
+# data fields (manipulable / surface_type) which the perception layer should provide at scale.
+_FIXED_LABELS = ("wall", "floor", "carpet", "moquette", "ceiling", "column", "door", "window",
+                 "partition", "staircase", "blinds", "panel", "grille", "tile", "frame",
+                 "desk surface", "desk leg", "monitor", "light fixture", "exit sign")
 
 
-def movable(label: str) -> bool:
-    return not any(f in label.lower() for f in FIXED)
+def is_pervasive_surface(obj: dict) -> bool:
+    """A floor/wall/ceiling-type surface: no discrete location, not a valid task target."""
+    return str(obj.get("surface_type", "")).lower() in _PERVASIVE
+
+
+def is_manipulable(obj: dict) -> bool:
+    """Prefer the data field; fall back to the label heuristic when perception didn't tag it."""
+    if "manipulable" in obj:
+        return bool(obj["manipulable"])
+    return not any(f in str(obj.get("label", "")).lower() for f in _FIXED_LABELS)
 
 
 def call_vlm(inventory: str) -> list[dict]:
@@ -132,11 +142,17 @@ def main() -> None:
             dropped.append((t, "bad type")); continue
         if tgt not in objs:
             dropped.append((t, f"target {tgt} not in inventory (hallucinated)")); continue
+        if is_pervasive_surface(objs[tgt]):  # e.g. the floor carpet — no discrete location
+            dropped.append((t, f"target '{objs[tgt]['label']}' is a surface, not an object"))
+            continue
         if typ == "fetch_carry":
             if dst not in objs:
                 dropped.append((t, f"destination {dst} not in inventory")); continue
-            if not movable(objs[tgt]["label"]):
-                dropped.append((t, f"target '{objs[tgt]['label']}' is fixed architecture")); continue
+            if is_pervasive_surface(objs[dst]):
+                dropped.append((t, f"destination '{objs[dst]['label']}' is a pervasive surface"))
+                continue
+            if not is_manipulable(objs[tgt]):
+                dropped.append((t, f"target '{objs[tgt]['label']}' is not manipulable")); continue
         kept.append({
             "task_id": f"{graph['scene_id']}/t{len(kept):02d}",
             "scene_id": graph["scene_id"], "type": typ,

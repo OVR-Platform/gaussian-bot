@@ -42,7 +42,9 @@
    "feasibility": {
     "target_exists": true,
     "destination_exists": true
-   }
+   },
+   "valid": false,
+   "invalid_reason": "target/dest is a floor surface, not an object"
   },
   {
    "task_id": "ufficio360/t02",
@@ -133,7 +135,9 @@
    "feasibility": {
     "target_exists": true,
     "destination_exists": true
-   }
+   },
+   "valid": false,
+   "invalid_reason": "target/dest is a floor surface, not an object"
   },
   {
    "task_id": "ufficio360/t06",
