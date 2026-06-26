@@ -1,0 +1,151 @@
+{
+ "results": [
+  {
+   "task_id": "ufficio360/t00",
+   "type": "goto",
+   "instruction": "Navigate to the emergency exit sign.",
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "task_complete",
+   "steps": 14,
+   "errors_m": [
+    0.67
+   ]
+  },
+  {
+   "task_id": "ufficio360/t01",
+   "type": "goto",
+   "instruction": "Go to the blue mat on the floor.",
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "task_complete",
+   "steps": 59,
+   "errors_m": [
+    0.83
+   ]
+  },
+  {
+   "task_id": "ufficio360/t02",
+   "type": "goto",
+   "instruction": "Move to the office desk surface located at the front.",
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "task_complete",
+   "steps": 13,
+   "errors_m": [
+    0.82
+   ]
+  },
+  {
+   "task_id": "ufficio360/t03",
+   "type": "find",
+   "instruction": "Locate the glass door near the window blinds.",
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "task_complete",
+   "steps": 13,
+   "errors_m": [
+    2.1
+   ]
+  },
+  {
+   "task_id": "ufficio360/t04",
+   "type": "find",
+   "instruction": "Find the office wall banner.",
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "step_budget",
+   "steps": 81,
+   "errors_m": [
+    4.99
+   ]
+  },
+  {
+   "task_id": "ufficio360/t05",
+   "type": "fetch_carry",
+   "instruction": "Pick up the blue mat and bring it to the office desk surface.",
+   "success": false,
+   "gcs": 0.0,
+   "stop_reason": "step_budget",
+   "steps": 81,
+   "errors_m": [
+    5.96,
+    Infinity
+   ]
+  },
+  {
+   "task_id": "ufficio360/t06",
+   "type": "fetch_carry",
+   "instruction": "Retrieve the banner stand and place it on the other office desk surface.",
+   "success": false,
+   "gcs": 0.0,
+   "stop_reason": "bounds",
+   "steps": 15,
+   "errors_m": [
+    Infinity,
+    Infinity
+   ]
+  },
+  {
+   "task_id": "ufficio360/t07",
+   "type": "goto",
+   "instruction": "Go to the cabinet door.",
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "task_complete",
+   "steps": 75,
+   "errors_m": [
+    0.81
+   ]
+  },
+  {
+   "task_id": "ufficio360/t08",
+   "type": "goto",
+   "instruction": "Navigate to the office window.",
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "task_complete",
+   "steps": 28,
+   "errors_m": [
+    0.83
+   ]
+  },
+  {
+   "task_id": "ufficio360/t09",
+   "type": "find",
+   "instruction": "Locate the structural column.",
+   "success": true,
+   "gcs": 1.0,
+   "stop_reason": "step_budget",
+   "steps": 81,
+   "errors_m": [
+    4.99
+   ]
+  },
+  {
+   "task_id": "ufficio360/t10",
+   "type": "goto",
+   "instruction": "Go to the wooden door.",
+   "success": false,
+   "gcs": 0.0,
+   "stop_reason": "bounds",
+   "steps": 67,
+   "errors_m": [
+    1.5
+   ]
+  },
+  {
+   "task_id": "ufficio360/t11",
+   "type": "fetch_carry",
+   "instruction": "Pick up the banner stand and bring it to the office wall banner.",
+   "success": false,
+   "gcs": 0.0,
+   "stop_reason": "bounds",
+   "steps": 14,
+   "errors_m": [
+    Infinity,
+    Infinity
+   ]
+  }
+ ]
+}
