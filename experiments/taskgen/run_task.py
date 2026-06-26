@@ -24,7 +24,7 @@ from gaussian_robot.session import build_session
 from gaussian_robot.vlm.client import Decision
 
 HERE = Path(__file__).parent
-MAX_STEPS = 45
+MAX_STEPS = 80
 
 
 class OracleNav:
@@ -91,8 +91,12 @@ def main() -> None:
         from gaussian_robot.metrics.coverage import floor_xy  # noqa: PLC0415
 
         ua = builder.up_axis
-        waypoints = plan(means, ua, floor_xy(seeds[0].pose.position, ua)[0],
-                         floor_xy(target_c, ua)[0])
+        tgt_floor = floor_xy(target_c, ua)[0]
+        waypoints = plan(means, ua, floor_xy(seeds[0].pose.position, ua)[0], tgt_floor)
+        # A* ends at the goal *cell* centre (~1 cell ≈ 1m off); append the exact target floor
+        # position so the final approach aims at the object itself, not the cell.
+        if waypoints and float(np.linalg.norm(waypoints[-1] - tgt_floor)) > 0.3:
+            waypoints.append(tgt_floor)
         print(f"planned path: {len(waypoints)} waypoints", flush=True)
 
     if "--oracle" in sys.argv:
