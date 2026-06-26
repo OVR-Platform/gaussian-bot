@@ -4,85 +4,43 @@
    "task_id": "ufficio360/t00",
    "type": "goto",
    "success": true,
-   "instruction": "Navigate to the emergency exit sign.",
-   "steps": 14
+   "instruction": "Go to the wooden door.",
+   "steps": 42
   },
   {
    "task_id": "ufficio360/t01",
    "type": "goto",
    "success": true,
-   "instruction": "Go to the blue mat on the floor.",
-   "steps": 51
+   "instruction": "Go to the frosted glass door.",
+   "steps": 41
   },
   {
    "task_id": "ufficio360/t02",
    "type": "goto",
-   "success": true,
-   "instruction": "Move to the office desk surface located at the front.",
-   "steps": 13
+   "success": false,
+   "instruction": "Go to the banner.",
+   "steps": 16
   },
   {
    "task_id": "ufficio360/t03",
    "type": "find",
    "success": true,
-   "instruction": "Locate the glass door near the window blinds.",
-   "steps": 13
+   "instruction": "Find the white column.",
+   "steps": 24
   },
   {
    "task_id": "ufficio360/t04",
    "type": "find",
    "success": true,
-   "instruction": "Find the office wall banner.",
-   "steps": 66
-  },
-  {
-   "task_id": "ufficio360/t05",
-   "type": "fetch_carry",
-   "success": true,
-   "instruction": "Pick up the blue mat and bring it to the office desk surface.",
-   "steps": 145
-  },
-  {
-   "task_id": "ufficio360/t06",
-   "type": "fetch_carry",
-   "success": false,
-   "instruction": "Retrieve the banner stand and place it on the other office desk surface.",
-   "steps": 17
-  },
-  {
-   "task_id": "ufficio360/t07",
-   "type": "goto",
-   "success": true,
-   "instruction": "Go to the cabinet door.",
-   "steps": 69
-  },
-  {
-   "task_id": "ufficio360/t08",
-   "type": "goto",
-   "success": true,
-   "instruction": "Navigate to the office window.",
+   "instruction": "Find the ventilation grille.",
    "steps": 28
   },
   {
-   "task_id": "ufficio360/t09",
-   "type": "find",
-   "success": true,
-   "instruction": "Locate the structural column.",
-   "steps": 74
-  },
-  {
-   "task_id": "ufficio360/t10",
+   "task_id": "ufficio360/t05",
    "type": "goto",
    "success": false,
-   "instruction": "Go to the wooden door.",
-   "steps": 56
-  },
-  {
-   "task_id": "ufficio360/t11",
-   "type": "fetch_carry",
-   "success": false,
-   "instruction": "Pick up the banner stand and bring it to the office wall banner.",
-   "steps": 18
+   "instruction": "Go to the wooden door at the far end.",
+   "steps": 86
   }
  ]
 }
