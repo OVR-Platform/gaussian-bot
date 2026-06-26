@@ -4,43 +4,71 @@
    "task_id": "ufficio360/t00",
    "type": "goto",
    "success": true,
-   "instruction": "Go to the wooden door.",
-   "steps": 42
+   "instruction": "Go to the water cooler.",
+   "steps": 63
   },
   {
    "task_id": "ufficio360/t01",
    "type": "goto",
    "success": true,
-   "instruction": "Go to the frosted glass door.",
-   "steps": 41
+   "instruction": "Go to the photocopier.",
+   "steps": 52
   },
   {
    "task_id": "ufficio360/t02",
    "type": "goto",
-   "success": false,
-   "instruction": "Go to the banner.",
-   "steps": 16
+   "success": true,
+   "instruction": "Go to the door.",
+   "steps": 38
   },
   {
    "task_id": "ufficio360/t03",
-   "type": "find",
-   "success": true,
-   "instruction": "Find the white column.",
-   "steps": 24
+   "type": "goto",
+   "success": false,
+   "instruction": "Go to the Banner.",
+   "steps": 15
   },
   {
    "task_id": "ufficio360/t04",
-   "type": "find",
+   "type": "goto",
    "success": true,
-   "instruction": "Find the ventilation grille.",
-   "steps": 28
+   "instruction": "Go to the Vending Machine.",
+   "steps": 40
   },
   {
    "task_id": "ufficio360/t05",
    "type": "goto",
+   "success": true,
+   "instruction": "Go to the television.",
+   "steps": 67
+  },
+  {
+   "task_id": "ufficio360/t06",
+   "type": "goto",
+   "success": true,
+   "instruction": "Go to the fire extinguisher.",
+   "steps": 62
+  },
+  {
+   "task_id": "ufficio360/t07",
+   "type": "goto",
+   "success": true,
+   "instruction": "Go to the whiteboard.",
+   "steps": 20
+  },
+  {
+   "task_id": "ufficio360/t08",
+   "type": "goto",
+   "success": true,
+   "instruction": "Go to the Event Backdrop.",
+   "steps": 81
+  },
+  {
+   "task_id": "ufficio360/t09",
+   "type": "fetch_carry",
    "success": false,
-   "instruction": "Go to the wooden door at the far end.",
-   "steps": 86
+   "instruction": "Pick up the banner and bring it to the Event Backdrop.",
+   "steps": 93
   }
  ]
 }
