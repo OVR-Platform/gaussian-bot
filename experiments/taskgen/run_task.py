@@ -77,7 +77,23 @@ def main() -> None:
     # the trained VLM won't have this — it learns from the demos.
     graph = json.loads((HERE / "scene_graph.json").read_text())
     objs = {o["id"]: o for o in graph["objects"]}
-    explorer.observation_builder.task_target = np.asarray(objs[task["target"]]["center"])
+    target_c = np.asarray(objs[task["target"]]["center"])
+    builder = explorer.observation_builder
+    builder.task_target = target_c
+
+    # Plan a path that routes AROUND obstacles (unless --direct): the TARGET cue follows the
+    # next waypoint, not the straight line — so the agent doesn't get trapped at e.g. a column.
+    waypoints: list[np.ndarray] = []
+    if "--direct" not in sys.argv:
+        from floor_planner import plan  # noqa: PLC0415
+
+        means = np.asarray(explorer.renderer.cloud.means.detach().cpu())  # type: ignore[attr-defined]
+        from gaussian_robot.metrics.coverage import floor_xy  # noqa: PLC0415
+
+        ua = builder.up_axis
+        waypoints = plan(means, ua, floor_xy(seeds[0].pose.position, ua)[0],
+                         floor_xy(target_c, ua)[0])
+        print(f"planned path: {len(waypoints)} waypoints", flush=True)
 
     if "--oracle" in sys.argv:
         explorer.vlm = OracleNav()  # scripted teacher that follows the bearing
@@ -85,12 +101,31 @@ def main() -> None:
         print("[oracle teacher policy]\n", flush=True)
 
     run: dict = {"task_id": task["task_id"], "trajectory": [], "forwards": [],
-                 "grabs": [], "drops": []}
+                 "grabs": [], "drops": [], "waypoints": [w.tolist() for w in waypoints]}
+
+    from gaussian_robot.metrics.coverage import floor_xy as _fxy  # noqa: PLC0415
+
+    wp_state = {"i": 0}
+
+    def aim() -> None:
+        """Point the TARGET cue at the current waypoint (advance when reached); final = target."""
+        if not waypoints or wp_state["i"] >= len(waypoints):
+            builder.task_target = target_c
+            return
+        wp = waypoints[wp_state["i"]]
+        builder.task_target = np.array([wp[0], target_c[1], wp[1]])  # floor wp at target height
+
+    aim()
 
     def sink(ev: object) -> None:
         if isinstance(ev, StepEvent):
             run["trajectory"].append([float(x) for x in ev.pose.position])
             run["forwards"].append([float(x) for x in viewing_direction(ev.pose.rotation)])
+            if waypoints and wp_state["i"] < len(waypoints):  # advance waypoint when reached
+                cur = _fxy(ev.pose.position, builder.up_axis)[0]
+                if float(np.linalg.norm(cur - waypoints[wp_state["i"]])) < 0.9:
+                    wp_state["i"] += 1
+                aim()
         elif isinstance(ev, CarryEvent):
             (run["grabs"] if ev.kind == "grab" else run["drops"]).append(
                 [float(x) for x in ev.floor]
