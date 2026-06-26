@@ -14,11 +14,34 @@ from gaussian_robot.nav.stop import (
     PoseBudget,
     SeedExhaustion,
     SessionContext,
+    StuckGuard,
     WalkContext,
     session_stop_reason,
     walk_stop_reason,
 )
 from gaussian_robot.render.camera import Pose
+
+
+def _ctx_at(action: Action, pos: np.ndarray) -> WalkContext:
+    return WalkContext(step=1, action=action, novelty=0.0, pose=Pose(position=pos))
+
+
+def test_stuck_guard_ignores_in_place_turns() -> None:
+    # Turning in place to orient toward a goal must NOT count as stuck (only translations do),
+    # else a robot that turns to face its target is killed before it can advance.
+    g = StuckGuard(step=1.0, window=4)
+    g.reset()
+    for _ in range(12):
+        g.update(_ctx_at(Action.TURN_LEFT, np.zeros(3)))
+    assert not g.should_stop()
+
+
+def test_stuck_guard_fires_when_translations_make_no_progress() -> None:
+    g = StuckGuard(step=1.0, window=4, min_displacement_factor=0.5)
+    g.reset()
+    for _ in range(5):
+        g.update(_ctx_at(Action.FORWARD, np.array([0.01, 0.0, 0.0])))
+    assert g.should_stop()
 
 
 def _ctx(action: Action, novelty: float, *, degenerate: bool = False, step: int = 1) -> WalkContext:

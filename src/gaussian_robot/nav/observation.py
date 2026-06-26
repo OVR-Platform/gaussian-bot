@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw
 from gaussian_robot.depth.estimator import DepthEstimator
 from gaussian_robot.metrics.coverage import CoverageState, floor_xy
 from gaussian_robot.render.base import Renderer, RenderResult
-from gaussian_robot.render.camera import Camera, Pose
+from gaussian_robot.render.camera import Camera, Pose, up_vector
 from gaussian_robot.vlm.observation import Observation
 
 
@@ -181,6 +181,7 @@ class ObservationBuilder:
     map_span: float | None = None
     task: str = ""
     mode: str = "densify"  # "densify" (explore for coverage) | "task" (pursue the goal in `task`)
+    task_target: np.ndarray | None = None  # (3,) world pos of the task target (privileged GT hint)
     depth_estimator: DepthEstimator | None = None
     describe_prompt: str = (
         "This is a render of a 3D Gaussian Splatting (3DGS) reconstruction, not a real photo. "
@@ -270,6 +271,9 @@ class ObservationBuilder:
         "HOW TO ACT:\n"
         "- NAVIGATE toward the target. forward/back move you; turn_left/turn_right and "
         "look_up/look_down only change where you look; move_up/move_down change height.\n"
+        "- When [state] reports a TARGET bearing/distance, STEER BY IT: if it says a side, "
+        "turn that way until the target is roughly ahead, then go forward to close the distance. "
+        "It is your compass to the goal — trust it over guessing.\n"
         "- GROUND THE TARGET in the [rgb] view: if you can see the thing the MISSION refers to, "
         "head straight to it. If you can't see it, explore toward where it is likely to be "
         "(through doorways, along the room) and DESCRIBE to reason about what you see.\n"
@@ -336,8 +340,12 @@ class ObservationBuilder:
         map_panel = self._body_frame_map(coverage, camera.pose, trail, gap_xy=gap_xy)
         wall_distance = wall_distance_from_depth(result.depth)
         if task_mode:
+            target_info = None
+            if self.task_target is not None:
+                tgt_floor = floor_xy(self.task_target, self.up_axis)[0]
+                target_info = self._gap_bearing(camera.pose, cur_floor, tgt_floor)
             state_line = self._task_state_line(
-                camera.pose, step, budget, wall_distance, carrying, blocked_ahead
+                camera.pose, step, budget, wall_distance, carrying, blocked_ahead, target_info
             )
         else:
             state_line = self._state_line(
@@ -408,14 +416,24 @@ class ObservationBuilder:
         wall_distance: float | None,
         carrying: bool,
         blocked_ahead: bool,
+        target_info: tuple[float, float] | None = None,
     ) -> str:
-        """Compact state for task mode: position, carried-state, wall, blocked — no coverage."""
+        """Compact state for task mode: position, carried-state, wall, blocked, target bearing."""
         step_str = f"{step}/{budget}" if budget > 0 else str(step)
         parts = [
             f"[state] step {step_str}",
             f"pose ({pose.position[0]:.2f},{pose.position[1]:.2f},{pose.position[2]:.2f})",
             f"carrying {'yes' if carrying else 'no'}",
         ]
+        if target_info is not None:
+            dist, bearing = target_info
+            if abs(bearing) < 12:
+                parts.append(f"TARGET {dist:.1f}m ahead — go forward")
+            else:
+                side = "right" if bearing > 0 else "left"
+                parts.append(
+                    f"TARGET {abs(bearing):.0f}° {side}, {dist:.1f}m — turn {side} then forward"
+                )
         if wall_distance is not None:
             parts.append(f"wall ahead {wall_distance:.2f}m")
         if blocked_ahead:
@@ -496,10 +514,18 @@ class ObservationBuilder:
         """(distance, signed bearing°) to ``gap_xy`` in the agent frame (+ = right)."""
         if gap_xy is None:
             return None
-        fwd2 = floor_xy(pose.heading(self.up_axis), self.up_axis)[0]
+        fwd3 = pose.heading(self.up_axis)
+        fwd2 = floor_xy(fwd3, self.up_axis)[0]
         n2 = float(np.linalg.norm(fwd2))
         fwd2 = np.array([1.0, 0.0]) if n2 < 1e-9 else fwd2 / n2
-        right2 = np.array([fwd2[1], -fwd2[0]])
+        # Right = up × forward (3D), projected to the floor. Deriving handedness this way is
+        # sign-correct for ANY up axis; the old guess [fwd_b, -fwd_a] was wrong for a negative
+        # up axis (e.g. -y), which inverted the left/right steering cue — and so the turn the
+        # agent (or the bearing-following teacher) should make to face the target.
+        right3 = np.cross(up_vector(self.up_axis), fwd3)
+        right2 = floor_xy(right3, self.up_axis)[0]
+        n3 = float(np.linalg.norm(right2))
+        right2 = np.array([0.0, 1.0]) if n3 < 1e-9 else right2 / n3
         v = gap_xy - cur_floor
         ahead = float(v @ fwd2)
         right = float(v @ right2)

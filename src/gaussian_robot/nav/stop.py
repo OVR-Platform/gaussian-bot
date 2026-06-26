@@ -142,10 +142,10 @@ class StuckGuard:
         self._triggered = False
 
     def update(self, ctx: WalkContext) -> None:
-        if (
-            ctx.action in (Action.STOP, Action.DESCRIBE, Action.MARK, Action.GRAB, Action.DROP)
-            or ctx.degenerate
-        ):
+        # Only translating actions count: turning/looking in place to orient is legitimate and
+        # must not be mistaken for being stuck (else a robot that turns to face its goal is killed
+        # before it can advance). STOP and degenerate views are also neutral.
+        if ctx.action in _NON_TRANSLATING or ctx.action is Action.STOP or ctx.degenerate:
             return
         self._positions.append(ctx.pose.position.copy())
         if len(self._positions) > self.window:
