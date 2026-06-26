@@ -11,6 +11,7 @@ import json
 import math
 import re
 from collections import Counter
+from pathlib import Path
 
 import httpx
 import numpy as np
@@ -40,11 +41,18 @@ def unproject(u: float, v: float, d: float, pose: Pose) -> np.ndarray:
     return pose.position + pose.rotation.T @ cam
 
 
-def vlm_label(crop: np.ndarray) -> tuple[str, str]:
-    prompt = ("This is a cropped object from an indoor office (3D-reconstruction render). "
-              "Name the single main object/structure in 1-4 words, and classify its surface as "
-              "solid|glass|reflective. Output ONLY the JSON, no reasoning: "
-              "{\"label\":\"...\",\"surface\":\"...\"}")
+def vlm_label(crop: np.ndarray) -> dict:
+    """Label + classify one instance with the VLM. The VLM (not a label heuristic) decides whether
+    it is a pervasive surface / fixed landmark / discrete object and whether it is manipulable —
+    so the downstream feasibility gate never has to guess from hand-coded label lists. The visual
+    is decisive: a floor-covering mask reads as a 'surface', not an object."""
+    prompt = ("This is a cropped instance from an indoor office (3D-reconstruction render). "
+              "Name the single main thing in 1-4 words; classify its material as "
+              "solid|glass|reflective; classify it as one of: 'surface' (pervasive floor/wall/"
+              "ceiling/carpet — no single location), 'landmark' (fixed structure you can walk to: "
+              "column, door, staircase), or 'object' (discrete, possibly movable); and say if it is "
+              "manipulable (carryable) true/false. Output ONLY JSON, no reasoning: "
+              '{"label":"..","surface":"..","object_class":"surface|landmark|object","manipulable":bool}')
     body = {"model": MODEL, "max_tokens": 256, "temperature": 0.0,
             "chat_template_kwargs": {"enable_thinking": False},
             "messages": [
@@ -55,11 +63,13 @@ def vlm_label(crop: np.ndarray) -> tuple[str, str]:
     try:
         with httpx.Client(timeout=60) as c:
             txt = c.post(VLM_URL, json=body).json()["choices"][0]["message"]["content"]
-        cand = re.findall(r'\{[^{}]*"label"[^{}]*\}', txt, re.DOTALL)  # last JSON with a label
-        o = json.loads(cand[-1])
-        return str(o.get("label", "?"))[:40], str(o.get("surface", "solid")).lower()
+        o = json.loads(re.findall(r'\{[^{}]*"label"[^{}]*\}', txt, re.DOTALL)[-1])
+        return {"label": str(o.get("label", "?"))[:40], "surface": str(o.get("surface", "solid")).lower(),
+                "object_class": str(o.get("object_class", "object")).lower(),
+                "manipulable": bool(o.get("manipulable", False))}
     except Exception as e:
-        return f"?({type(e).__name__})", "solid"
+        return {"label": f"?({type(e).__name__})", "surface": "solid",
+                "object_class": "object", "manipulable": False}
 
 
 def main() -> None:
@@ -118,20 +128,31 @@ def main() -> None:
     print(f"cross-view reconciliation: {recon}/{len(dets)} ({100*recon/max(1,len(dets)):.0f}%)  "
           f"[v1 points 24% | v2 COCO-masks 47%]")
 
-    # label only the stable instances (open-vocab), cropping from a source render
+    # label + classify each stable instance with the VLM (open-vocab; class & manipulability too)
     print("\nlabelling stable instances with the VLM (open-vocab)...", flush=True)
     for c in sorted(multi, key=lambda x: -len(x["views"])):
         s = c["src"][0]
         x0, y0, x1, y1 = s["bbox"]
         crop = renders[s["view"]][max(0, y0 - 4):y1 + 4, max(0, x0 - 4):x1 + 4]
-        c["label"], c["surface"] = vlm_label(crop)
+        c.update(vlm_label(crop))
     print(f"\nstable office inventory ({len(multi)} objects):")
-    surf_count: Counter = Counter()
+    cls_count: Counter = Counter()
     for c in sorted(multi, key=lambda x: -len(x["views"])):
         ctr = ", ".join(f"{v:.2f}" for v in c["center"])
-        surf_count[c["surface"]] += 1
-        print(f"  {c['label']:26s} {c['surface']:10s} x{len(c['views']):2d}  ({ctr})")
-    print("\nsurface mix of stable instances:", dict(surf_count))
+        cls_count[c["object_class"]] += 1
+        print(f"  {c['label']:26s} {c['object_class']:8s} manip={str(c['manipulable']):5s} "
+              f"x{len(c['views']):2d}  ({ctr})")
+    print("\nclass mix of stable instances:", dict(cls_count))
+
+    out = Path(__file__).parent / "scene_graph.json"
+    graph = {"scene_id": "ufficio360", "up_axis": "-y", "schema_version": 1,
+             "provenance": {"perception": "probe_v3_sam_openvocab"},
+             "objects": [{"id": f"obj_{i:02d}", "label": c["label"], "surface": c["surface"],
+                          "object_class": c["object_class"], "manipulable": c["manipulable"],
+                          "center": [round(float(v), 2) for v in c["center"]]}
+                         for i, c in enumerate(sorted(multi, key=lambda x: -len(x["views"])))]}
+    out.write_text(json.dumps(graph, indent=1))
+    print(f"\nwrote {out}")
 
 
 if __name__ == "__main__":

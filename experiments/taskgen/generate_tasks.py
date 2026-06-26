@@ -32,8 +32,13 @@ _FIXED_LABELS = ("wall", "floor", "carpet", "moquette", "ceiling", "column", "do
 
 
 def is_pervasive_surface(obj: dict) -> bool:
-    """A floor/wall/ceiling-type surface: no discrete location, not a valid task target."""
-    return str(obj.get("surface_type", "")).lower() in _PERVASIVE
+    """A floor/wall/ceiling-type surface: no discrete location, not a valid task target.
+
+    Driven by the VLM's ``object_class`` (assigned at perception time), with ``surface_type`` as
+    a secondary signal — no hand-coded label list.
+    """
+    return (str(obj.get("object_class", "")).lower() == "surface"
+            or str(obj.get("surface_type", "")).lower() in _PERVASIVE)
 
 
 def is_manipulable(obj: dict) -> bool:
