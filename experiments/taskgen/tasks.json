@@ -1,0 +1,167 @@
+{
+ "scene_id": "ufficio360",
+ "schema_version": 1,
+ "tasks": [
+  {
+   "task_id": "ufficio360/t00",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "goto the staircase",
+   "target": "obj_13",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_13"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t01",
+   "scene_id": "ufficio360",
+   "type": "find",
+   "instruction": "find the emergency exit sign",
+   "target": "obj_29",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "seen",
+     "args": [
+      "agent",
+      "obj_29"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t02",
+   "scene_id": "ufficio360",
+   "type": "goto",
+   "instruction": "goto the office glass partition",
+   "target": "obj_19",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "at",
+     "args": [
+      "agent",
+      "obj_19"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t03",
+   "scene_id": "ufficio360",
+   "type": "find",
+   "instruction": "find the structural column",
+   "target": "obj_05",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "seen",
+     "args": [
+      "agent",
+      "obj_05"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t04",
+   "scene_id": "ufficio360",
+   "type": "find",
+   "instruction": "find the flat screen monitor",
+   "target": "obj_22",
+   "destination": null,
+   "goal_predicates": [
+    {
+     "pred": "seen",
+     "args": [
+      "agent",
+      "obj_22"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t05",
+   "scene_id": "ufficio360",
+   "type": "fetch_carry",
+   "instruction": "Take the banner stand to the staircase.",
+   "target": "obj_00",
+   "destination": "obj_13",
+   "goal_predicates": [
+    {
+     "pred": "holding",
+     "args": [
+      "agent",
+      "obj_00"
+     ]
+    },
+    {
+     "pred": "at",
+     "args": [
+      "obj_00",
+      "obj_13"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  },
+  {
+   "task_id": "ufficio360/t06",
+   "scene_id": "ufficio360",
+   "type": "fetch_carry",
+   "instruction": "Carry the blue mat to the office cabinet.",
+   "target": "obj_04",
+   "destination": "obj_23",
+   "goal_predicates": [
+    {
+     "pred": "holding",
+     "args": [
+      "agent",
+      "obj_04"
+     ]
+    },
+    {
+     "pred": "at",
+     "args": [
+      "obj_04",
+      "obj_23"
+     ]
+    }
+   ],
+   "feasibility": {
+    "target_exists": true,
+    "destination_exists": true
+   }
+  }
+ ]
+}
