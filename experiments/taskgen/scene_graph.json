@@ -3,150 +3,535 @@
  "up_axis": "-y",
  "schema_version": 1,
  "provenance": {
-  "perception": "probe_v4_annotate_photos (real mapping images)"
+  "perception": "probe_v5_fuse_then_label (30 real photos)"
  },
  "objects": [
   {
    "id": "obj_00",
-   "label": "white column",
-   "object_class": "landmark",
-   "manipulable": false,
+   "label": "banner",
+   "object_class": "object",
+   "manipulable": true,
    "center": [
-    -1.29,
-    -1.46,
-    0.43
+    -1.3,
+    -1.02,
+    -4.67
    ]
   },
   {
    "id": "obj_01",
-   "label": "Banner",
+   "label": "water cooler",
    "object_class": "object",
    "manipulable": false,
    "center": [
-    3.02,
-    -1.21,
-    4.48
-   ]
-  },
-  {
-   "id": "obj_02",
-   "label": "door",
-   "object_class": "landmark",
-   "manipulable": false,
-   "center": [
-    4.51,
-    -1.37,
+    0.78,
+    -1.93,
     -0.35
    ]
   },
   {
+   "id": "obj_02",
+   "label": "photocopier",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    1.21,
+    -0.43,
+    -0.92
+   ]
+  },
+  {
    "id": "obj_03",
-   "label": "gray wall surface",
+   "label": "blue carpet",
    "object_class": "surface",
    "manipulable": false,
    "center": [
-    -2.03,
-    -2.79,
-    0.71
+    3.15,
+    0.09,
+    -2.06
    ]
   },
   {
    "id": "obj_04",
-   "label": "ceiling tiles",
-   "object_class": "surface",
+   "label": "door",
+   "object_class": "landmark",
    "manipulable": false,
    "center": [
-    -1.1,
-    -2.9,
-    1.12
+    1.23,
+    -1.06,
+    -4.78
    ]
   },
   {
    "id": "obj_05",
-   "label": "frosted glass door",
-   "object_class": "landmark",
+   "label": "office floor tiles",
+   "object_class": "surface",
    "manipulable": false,
    "center": [
-    3.8,
-    -1.02,
-    1.51
+    4.93,
+    0.22,
+    -2.82
    ]
   },
   {
    "id": "obj_06",
-   "label": "ceiling tile",
-   "object_class": "surface",
+   "label": "Banner",
+   "object_class": "object",
    "manipulable": false,
    "center": [
-    -1.67,
-    -2.81,
-    -1.41
+    3.3,
+    -1.17,
+    4.11
    ]
   },
   {
    "id": "obj_07",
-   "label": "ceiling tiles",
+   "label": "drop ceiling",
    "object_class": "surface",
    "manipulable": false,
    "center": [
-    -1.78,
-    -2.79,
-    -2.03
+    6.33,
+    -2.78,
+    -3.02
    ]
   },
   {
    "id": "obj_08",
-   "label": "wooden door",
-   "object_class": "landmark",
+   "label": "ceiling light",
+   "object_class": "surface",
    "manipulable": false,
    "center": [
-    1.09,
-    -0.93,
-    -4.68
+    5.2,
+    -2.79,
+    -3.0
    ]
   },
   {
    "id": "obj_09",
-   "label": "ventilation grille",
+   "label": "white cabinet",
    "object_class": "object",
    "manipulable": false,
    "center": [
-    -2.24,
-    -2.85,
-    -1.0
+    4.76,
+    -0.16,
+    -4.13
    ]
   },
   {
    "id": "obj_10",
-   "label": "wooden door",
-   "object_class": "landmark",
+   "label": "ceiling tiles",
+   "object_class": "surface",
    "manipulable": false,
    "center": [
-    5.55,
-    -0.91,
-    -4.5
+    -2.47,
+    -2.84,
+    2.26
    ]
   },
   {
    "id": "obj_11",
-   "label": "ceiling",
-   "object_class": "surface",
+   "label": "Staircase",
+   "object_class": "landmark",
    "manipulable": false,
    "center": [
-    8.94,
-    -3.15,
-    -2.35
+    7.3,
+    -2.65,
+    -3.22
    ]
   },
   {
    "id": "obj_12",
-   "label": "door mat",
+   "label": "frosted glass door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    3.82,
+    -1.6,
+    2.11
+   ]
+  },
+  {
+   "id": "obj_13",
+   "label": "wall",
    "object_class": "surface",
    "manipulable": false,
    "center": [
-    8.7,
-    0.09,
-    -0.11
+    6.95,
+    -1.35,
+    -4.5
+   ]
+  },
+  {
+   "id": "obj_14",
+   "label": "ceiling",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    7.66,
+    -2.83,
+    -2.01
+   ]
+  },
+  {
+   "id": "obj_15",
+   "label": "Vending Machine",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    -2.1,
+    -1.27,
+    -3.98
+   ]
+  },
+  {
+   "id": "obj_16",
+   "label": "door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    5.69,
+    -0.94,
+    -4.45
+   ]
+  },
+  {
+   "id": "obj_17",
+   "label": "No Fake Web3 Business Unit",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    3.76,
+    -2.06,
+    2.3
+   ]
+  },
+  {
+   "id": "obj_18",
+   "label": "frosted glass door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -5.22,
+    -0.89,
+    1.42
+   ]
+  },
+  {
+   "id": "obj_19",
+   "label": "door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -4.35,
+    -1.18,
+    2.64
+   ]
+  },
+  {
+   "id": "obj_20",
+   "label": "frosted glass door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    0.82,
+    -1.22,
+    4.37
+   ]
+  },
+  {
+   "id": "obj_21",
+   "label": "office wall",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    4.5,
+    -1.41,
+    -0.32
+   ]
+  },
+  {
+   "id": "obj_22",
+   "label": "frosted glass door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -0.6,
+    -1.14,
+    4.14
+   ]
+  },
+  {
+   "id": "obj_23",
+   "label": "water cooler",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    1.18,
+    -0.37,
+    -0.1
+   ]
+  },
+  {
+   "id": "obj_24",
+   "label": "suspended ceiling",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -1.3,
+    -2.76,
+    -4.07
+   ]
+  },
+  {
+   "id": "obj_25",
+   "label": "drop ceiling tiles",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    0.03,
+    -2.75,
+    -4.17
+   ]
+  },
+  {
+   "id": "obj_26",
+   "label": "frosted glass wall",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -4.84,
+    -1.22,
+    -1.82
+   ]
+  },
+  {
+   "id": "obj_27",
+   "label": "tiled floor",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    6.07,
+    0.24,
+    -2.28
+   ]
+  },
+  {
+   "id": "obj_28",
+   "label": "white column",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -1.27,
+    -1.37,
+    0.37
+   ]
+  },
+  {
+   "id": "obj_29",
+   "label": "Event Backdrop",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    5.85,
+    -1.02,
+    -0.39
+   ]
+  },
+  {
+   "id": "obj_30",
+   "label": "tile floor",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    4.59,
+    0.25,
+    -3.52
+   ]
+  },
+  {
+   "id": "obj_31",
+   "label": "frosted glass door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -3.24,
+    -1.12,
+    3.47
+   ]
+  },
+  {
+   "id": "obj_32",
+   "label": "Column",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    7.19,
+    -1.37,
+    -0.48
+   ]
+  },
+  {
+   "id": "obj_33",
+   "label": "frosted glass",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -1.87,
+    -1.44,
+    3.9
+   ]
+  },
+  {
+   "id": "obj_34",
+   "label": "ceiling vent",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    3.87,
+    -2.89,
+    3.74
+   ]
+  },
+  {
+   "id": "obj_35",
+   "label": "fire extinguisher",
+   "object_class": "object",
+   "manipulable": true,
+   "center": [
+    3.89,
+    -1.49,
+    0.15
+   ]
+  },
+  {
+   "id": "obj_36",
+   "label": "cabinet handle",
+   "object_class": "object",
+   "manipulable": true,
+   "center": [
+    1.88,
+    -0.63,
+    -4.49
+   ]
+  },
+  {
+   "id": "obj_37",
+   "label": "television",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    4.39,
+    -1.53,
+    -4.25
+   ]
+  },
+  {
+   "id": "obj_38",
+   "label": "Over logo",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    3.31,
+    -1.93,
+    4.1
+   ]
+  },
+  {
+   "id": "obj_39",
+   "label": "door frame",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -4.7,
+    -1.45,
+    -0.71
+   ]
+  },
+  {
+   "id": "obj_40",
+   "label": "Astronaut in Space",
+   "object_class": "object",
+   "manipulable": false,
+   "center": [
+    -0.17,
+    -0.62,
+    -4.79
+   ]
+  },
+  {
+   "id": "obj_41",
+   "label": "whiteboard",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -3.37,
+    -2.04,
+    3.62
+   ]
+  },
+  {
+   "id": "obj_42",
+   "label": "office floor",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    3.63,
+    -0.31,
+    3.72
+   ]
+  },
+  {
+   "id": "obj_43",
+   "label": "floor",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -0.05,
+    -0.37,
+    0.66
+   ]
+  },
+  {
+   "id": "obj_44",
+   "label": "glass window",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    -5.37,
+    -2.73,
+    1.81
+   ]
+  },
+  {
+   "id": "obj_45",
+   "label": "frosted glass window",
+   "object_class": "surface",
+   "manipulable": false,
+   "center": [
+    5.84,
+    -2.02,
+    3.47
+   ]
+  },
+  {
+   "id": "obj_46",
+   "label": "office partition",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -4.48,
+    -0.19,
+    2.56
+   ]
+  },
+  {
+   "id": "obj_47",
+   "label": "office door",
+   "object_class": "landmark",
+   "manipulable": false,
+   "center": [
+    -3.2,
+    -0.2,
+    3.54
    ]
   }
  ]
