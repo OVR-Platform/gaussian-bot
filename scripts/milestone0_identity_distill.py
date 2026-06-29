@@ -107,7 +107,7 @@ def _check_round_trip(cloud: GaussianCloud, cams: list[Camera], device: str) -> 
 
 
 def _check_identity_distill(
-    cloud: GaussianCloud, cams: list[Camera], device: str, iters: int
+    cloud: GaussianCloud, cams: list[Camera], device: str, iters: int, out_path: Path
 ) -> bool:
     print("\n[2/2] Identity distill (no diffusion, no warp)")
     renderer = GsplatRenderer(cloud)
@@ -135,6 +135,8 @@ def _check_identity_distill(
     print(f"      anchor re-render PSNR (min): {worst:.2f} dB")
     print(f"      gaussians: {cloud.means.shape[0]} -> {dist.num_gaussians}")
     print(f"      peak VRAM: {vram:.2f} GB")
+    saved = dist.save_ply(out_path)  # writes a NEW file; the input --ply is never touched
+    print(f"      wrote new cloud: {saved}")
     ok = worst > NO_REGRESS_PSNR and vram < VRAM_CEILING_GB
     print(
         f"      -> {'PASS' if ok else 'FAIL'} (need > {NO_REGRESS_PSNR} dB, < {VRAM_CEILING_GB} GB)"
@@ -144,23 +146,37 @@ def _check_identity_distill(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Milestone-0 identity distill gate")
-    parser.add_argument("--ply", required=True, help="Path to a 3DGS point_cloud.ply")
+    parser.add_argument("--ply", required=True, help="Path to a 3DGS point_cloud.ply (READ-ONLY)")
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--iters", type=int, default=300)
     parser.add_argument("--views", type=int, default=4)
+    parser.add_argument(
+        "--out",
+        default=None,
+        help="Output PLY for the distilled cloud (a NEW file). "
+        "Default: data/enhanced/<stem>_m0_identity.ply. The original --ply is never written.",
+    )
     args = parser.parse_args()
 
     if not torch.cuda.is_available():
         print("ERROR: gsplat rasterization needs a CUDA GPU.")
         return 2
 
-    print(f"Loading {args.ply} on {args.device} ...")
+    in_path = Path(args.ply)
+    out_path = (
+        Path(args.out) if args.out else Path("data/enhanced") / f"{in_path.stem}_m0_identity.ply"
+    )
+    if out_path.resolve() == in_path.resolve():
+        print("ERROR: --out must differ from --ply; refusing to overwrite the original.")
+        return 2
+
+    print(f"Loading {args.ply} on {args.device} (read-only) ...")
     cloud = load_gaussian_cloud(args.ply, device=args.device)
     print(f"  {cloud.means.shape[0]} gaussians, SH degree {cloud.sh_degree}")
     cams = _orbit_cameras(cloud, n=args.views)
 
     ok1 = _check_round_trip(cloud, cams, args.device)
-    ok2 = _check_identity_distill(cloud, cams, args.device, args.iters)
+    ok2 = _check_identity_distill(cloud, cams, args.device, args.iters, out_path)
 
     print(f"\nMILESTONE-0: {'PASS ✅' if ok1 and ok2 else 'FAIL ❌'}")
     return 0 if (ok1 and ok2) else 1
