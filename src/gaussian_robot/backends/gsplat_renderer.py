@@ -10,7 +10,7 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 import numpy as np
 import torch
@@ -33,6 +33,77 @@ class GaussianCloud:
     full_bounds: SceneBounds  # raw min/max of all gaussians
     density_grid: np.ndarray | None = None  # (G, G) floor-plane density, normalised [0,1]
     density_bounds: tuple[np.ndarray, np.ndarray] | None = None  # (lo, hi) for the grid
+
+
+@dataclass(frozen=True)
+class GradRender:
+    """A differentiable render whose tensors keep the autograd graph to the gaussians.
+
+    Unlike :class:`~gaussian_robot.render.base.RenderResult` (uint8 numpy, produced under
+    ``torch.no_grad``), this holds float CUDA tensors so a training loop can backprop a
+    photometric loss into the gaussian parameters. ``info`` is gsplat's rasterisation meta
+    dict — required by a :mod:`gsplat.strategy` ``Strategy`` (e.g. MCMC densification),
+    which :meth:`GsplatRenderer.render` discards.
+    """
+
+    rgb: torch.Tensor  # (H, W, 3) float, unclamped radiance
+    depth: torch.Tensor  # (H, W) float; <= 0 means empty
+    alpha: torch.Tensor  # (H, W) float in [0, 1], accumulated opacity (the paper's "O")
+    info: dict[str, Any]  # gsplat meta (means2d, radii, gaussian_ids, width, height, ...)
+
+
+def _viewmat_and_ks(camera: Camera, device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    """Build the ``(1, 4, 4)`` world->camera viewmat and ``(1, 3, 3)`` intrinsics for gsplat."""
+    rot = camera.pose.rotation
+    t = -rot @ camera.pose.position
+    viewmat = np.eye(4, dtype=np.float64)
+    viewmat[:3, :3] = rot
+    viewmat[:3, 3] = t
+    viewmats = torch.tensor(viewmat, dtype=torch.float32, device=device).unsqueeze(0)
+    ks = torch.tensor(camera.intrinsics.k_matrix, dtype=torch.float32, device=device).unsqueeze(0)
+    return viewmats, ks
+
+
+def rasterize_gaussians(
+    means: torch.Tensor,
+    quats: torch.Tensor,
+    scales: torch.Tensor,
+    opacities: torch.Tensor,
+    sh_coeffs: torch.Tensor,
+    sh_degree: int,
+    camera: Camera,
+    *,
+    packed: bool = True,
+) -> GradRender:
+    """Differentiable RGB+D+alpha render of an explicit gaussian set (no ``no_grad`` guard).
+
+    ``scales`` and ``opacities`` are the **activated** values (post ``exp`` / ``sigmoid``),
+    matching :class:`GaussianCloud`. A trainer holds pre-activation leaves (log-scale,
+    opacity-logit) and applies the activations before calling this — see
+    :class:`gaussian_robot.enhance.distiller.GaussianDistiller`. Quaternions are normalised
+    internally by gsplat, so raw (unnormalised) ``quats`` are fine.
+    """
+    viewmats, ks = _viewmat_and_ks(camera, means.device)
+    rendered, alphas, info = rasterization(
+        means=means,
+        quats=quats,
+        scales=scales,
+        opacities=opacities,
+        colors=sh_coeffs,
+        viewmats=viewmats,
+        Ks=ks,
+        width=camera.intrinsics.width,
+        height=camera.intrinsics.height,
+        sh_degree=sh_degree,
+        render_mode="RGB+D",
+        packed=packed,
+    )
+    return GradRender(
+        rgb=rendered[0, :, :, :3],
+        depth=rendered[0, :, :, 3],
+        alpha=alphas[0, :, :, 0],
+        info=info,
+    )
 
 
 class GsplatRenderer:
@@ -85,6 +156,23 @@ class GsplatRenderer:
         alpha = alphas[0, :, :, 0].cpu().numpy().astype(np.float32)
 
         return RenderResult(rgb=rgb, camera=camera, depth=depth, alpha=alpha)
+
+    def train_render(self, camera: Camera) -> GradRender:
+        """Differentiable counterpart to :meth:`render` over this renderer's own cloud.
+
+        Drops the ``no_grad`` guard and keeps gsplat's ``info`` meta (which :meth:`render`
+        discards) so a densification ``Strategy`` can consume it. The cloud stores activated
+        ``scales``/``opacities``, so they pass straight through.
+        """
+        return rasterize_gaussians(
+            self.cloud.means,
+            self.cloud.quats,
+            self.cloud.scales,
+            self.cloud.opacities,
+            self.cloud.sh_coeffs,
+            self.cloud.sh_degree,
+            camera,
+        )
 
 
 _PLY_STRUCT_CODES = {

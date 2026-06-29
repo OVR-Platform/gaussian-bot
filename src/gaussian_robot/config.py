@@ -25,7 +25,9 @@ class RunConfig(BaseModel):
             "Mission mode. 'densify': explore to find under-reconstructed regions and "
             "propose fill-in camera poses (coverage-driven). 'task': pursue the goal in "
             "task_prompt (navigate to / find / fetch-and-carry), using grab/drop actions and "
-            "stopping when the VLM declares the task done. Both share the renderer, VLM, "
+            "stopping when the VLM declares the task done. 'enhance': synthesize novel views "
+            "in under-observed (low-alpha) regions and distil them back into the gaussians "
+            "(see docs/research/splat-enhancement-study.md). All share the renderer, VLM, "
             "controller and UI; only the prompt, stop criteria and deliverable differ."
         ),
     )
@@ -160,12 +162,50 @@ class RunConfig(BaseModel):
         description="Max conversation turns kept for multi-turn VLM history. 0 = stateless.",
     )
 
+    # ---- enhance mode (docs/research/splat-enhancement-study.md) ----
+    enhance_filler: str = Field(
+        default="geometric",
+        description=(
+            "Which ViewFiller produces target views for under-observed poses. 'identity': "
+            "re-render the splat itself (Milestone-0 plumbing check); 'geometric': depth-warp "
+            "real captured pixels (P1); 'difix': single-step diffusion fixer (P2)."
+        ),
+    )
+    enhance_tau_lo: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Alpha below which a pixel is treated as a hole to fill (coverage mask M).",
+    )
+    enhance_cap_max_factor: float = Field(
+        default=1.15,
+        ge=1.0,
+        description="MCMC gaussian-count ceiling as a multiple of the loaded count (bounds VRAM).",
+    )
+    enhance_iters_per_round: int = Field(
+        default=500, ge=1, description="Distillation iterations per progressive frontier round."
+    )
+    enhance_frontier_batch: int = Field(
+        default=8, ge=1, description="Number of gap poses enhanced+distilled per round."
+    )
+    enhance_out_ply: str | None = Field(
+        default=None, description="Where to write the enhanced cloud; None -> alongside ply_path."
+    )
+
     @field_validator("mode")
     @classmethod
     def _check_mode(cls, v: str) -> str:
         s = v.strip().lower()
-        if s not in ("densify", "task"):
-            raise ValueError("mode must be 'densify' or 'task'")
+        if s not in ("densify", "task", "enhance"):
+            raise ValueError("mode must be 'densify', 'task' or 'enhance'")
+        return s
+
+    @field_validator("enhance_filler")
+    @classmethod
+    def _check_filler(cls, v: str) -> str:
+        s = v.strip().lower()
+        if s not in ("identity", "geometric", "difix"):
+            raise ValueError("enhance_filler must be 'identity', 'geometric' or 'difix'")
         return s
 
     @field_validator("up_axis")
