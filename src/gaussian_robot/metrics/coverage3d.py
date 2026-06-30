@@ -69,6 +69,24 @@ class Coverage3D:
         centers: np.ndarray = self.lo + (idx + 0.5) / g * (self.hi - self.lo)
         return centers
 
+    def gap_gaussian_mask(self, means: np.ndarray) -> np.ndarray:
+        """``(N,)`` bool: which gaussians fall inside a gap voxel.
+
+        Lets the distiller restrict its colour/opacity updates to the gaussians that actually
+        occupy the under-observed gaps, so generated fill content does not bleed onto the
+        gaussians the anchor views trust (the official Difix3D+ "gaps drive their own gaussians"
+        behaviour, achieved here without densification).
+        """
+        if means.shape[0] == 0:
+            return np.zeros((0,), dtype=bool)
+        g = int(self.occupied.shape[0])
+        idx = _voxel_index(means, self.lo, self.hi, g)  # (N, 3)
+        inb = np.all((idx >= 0) & (idx < g), axis=-1)
+        ci = np.clip(idx, 0, g - 1)
+        gm = self.gap_mask
+        hit: np.ndarray = gm[ci[:, 0], ci[:, 1], ci[:, 2]] & inb
+        return hit
+
     def nearest_gap(self, position: np.ndarray) -> np.ndarray | None:
         """World centre of the nearest gap voxel to ``position`` (3D), or None."""
         centers = self.gap_centers()

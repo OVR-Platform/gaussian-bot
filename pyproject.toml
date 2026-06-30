@@ -94,7 +94,8 @@ line-length = 100
 target-version = "py311"
 src = ["src", "tests"]
 # experiments/ holds R&D prototype scripts (perception probes), not production code.
-extend-exclude = ["experiments"]
+# _difix/ is vendored verbatim from nv-tlabs/Difix3D (only import renames patched).
+extend-exclude = ["experiments", "src/gaussian_robot/enhance/fillers/_difix"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "C4", "SIM", "PL"]
@@ -124,6 +125,12 @@ warn_unused_ignores = true
 warn_redundant_casts = true
 files = ["src", "tests"]
 disable_error_code = ["type-arg"]
+# _difix/ is vendored third-party code (nv-tlabs/Difix3D); don't type-check or follow into it.
+exclude = "src/gaussian_robot/enhance/fillers/_difix/"
 [[tool.mypy.overrides]]
 module = ["gsplat.*", "httpx.*", "torch.*", "depth_anything_3.*", "xformers.*"]
 ignore_missing_imports = true
+[[tool.mypy.overrides]]
+module = ["gaussian_robot.enhance.fillers._difix.*"]
+ignore_missing_imports = true
+follow_imports = "skip"

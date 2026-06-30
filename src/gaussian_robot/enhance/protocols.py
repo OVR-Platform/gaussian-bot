@@ -39,6 +39,11 @@ class SupervisionView:
     camera: Camera
     target_rgb: np.ndarray  # (H, W, 3) float in [0, 1]
     mask: np.ndarray | None = None  # (H, W) float in [0, 1], or None for anchors
+    # Per-view loss scale. NOTE: near-INERT under the distiller's per-view Adam (Adam is
+    # scale-invariant), so this scalar does NOT meaningfully bias real-anchors-over-fills on its
+    # own — to actually reweight, vary sampling frequency / accumulate gradients. Kept for callers
+    # that fold it into a single combined loss. Default 1.0 (no-op).
+    weight: float = 1.0
 
 
 @runtime_checkable
