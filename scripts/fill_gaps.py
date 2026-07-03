@@ -1,4 +1,7 @@
-"""Run the generative Difix3D+ gap-FILL loop on a scene (docs/research/).
+"""SUPERSEDED by ``uv run gaussian-robot enhance`` (ADR-0011) — kept for research reference.
+
+The CLI drives the same fill through the robot-driven path; use ``--rounds-mode`` for this
+script's rounds regime. Run the generative Difix3D+ gap-FILL loop on a scene (docs/research/).
 
 Unlike ``enhance_scene.py`` (the M0 anchored, densify-controlled refinement), this drives the
 reference-conditioned diffusion filler: each round renders near-view gap poses DEGRADED from the
@@ -30,7 +33,9 @@ from gaussian_robot.enhance.orchestrator import fill_gaps_scene
 def main() -> int:
     ap = argparse.ArgumentParser(description="Generative Difix3D+ gap-fill (reference-conditioned)")
     ap.add_argument("--ply", required=True, help="Input 3DGS PLY (READ-ONLY)")
-    ap.add_argument("--model", required=True, help="COLMAP sparse model dir (cameras.bin/images.bin)")
+    ap.add_argument(
+        "--model", required=True, help="COLMAP sparse model dir (cameras.bin/images.bin)"
+    )
     ap.add_argument("--images", required=True, help="Dir with the training images")
     ap.add_argument(
         "--out", default=None, help="Output PLY (NEW file); default data/enhanced/<stem>_filled.ply"
@@ -57,7 +62,9 @@ def main() -> int:
         default=0.3,
         help="Revert/stop if a round drops more than this below the best held-out PSNR.",
     )
-    ap.add_argument("--restrict-to-gaps", action="store_true", help="Gap-local SH/opacity gradients")
+    ap.add_argument(
+        "--restrict-to-gaps", action="store_true", help="Gap-local SH/opacity gradients"
+    )
     ap.add_argument("--ssim-weight", type=float, default=0.0)
     ap.add_argument(
         "--ref-select",
@@ -77,7 +84,9 @@ def main() -> int:
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"Gap-fill {in_path.name} (read-only) -> {out_path}")
-    print(f"  filler={args.filler} dtype={args.filler_dtype} rounds={args.rounds} iters={args.iters}")
+    print(
+        f"  filler={args.filler} dtype={args.filler_dtype} rounds={args.rounds} iters={args.iters}"
+    )
     report = fill_gaps_scene(
         args.ply,
         args.model,
@@ -106,9 +115,13 @@ def main() -> int:
     )
     print(f"  coverage gaps: {report.gap_count}   gap poses filled/round: {report.n_gap_poses}")
     print(f"  gaussians: {report.n_gaussians_before} -> {report.n_gaussians_after}")
-    print(f"  rounds run: {report.rounds_run}   per-round PSNR: {[round(x, 3) for x in report.per_round_psnr]}")
-    print(f"  fill diag: mask_frac={report.fill_mask_frac:.3f}  delta={report.fill_delta:.4f}"
-          f"{'  ⚠ near-no-op fill (empty mask / weak reference)' if report.fill_delta < 1e-3 else ''}")
+    print(
+        f"  rounds run: {report.rounds_run}   per-round PSNR: {[round(x, 3) for x in report.per_round_psnr]}"
+    )
+    print(
+        f"  fill diag: mask_frac={report.fill_mask_frac:.3f}  delta={report.fill_delta:.4f}"
+        f"{'  ⚠ near-no-op fill (empty mask / weak reference)' if report.fill_delta < 1e-3 else ''}"
+    )
     print(f"  held-out real-view PSNR: {report.psnr_before:.3f} dB  ->  {report.psnr_after:.3f} dB")
     print(f"  per-view before: {[round(x, 1) for x in report.per_eval_before]}")
     print(f"  per-view after:  {[round(x, 1) for x in report.per_eval_after]}")

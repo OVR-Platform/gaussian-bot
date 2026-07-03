@@ -1,4 +1,7 @@
-"""Run the splat-enhancement loop on a scene (docs/research/splat-enhancement-study.md).
+"""SUPERSEDED by ``uv run gaussian-robot enhance`` (ADR-0011) — kept for research reference.
+
+The supported path is the CLI (`--rounds-mode` covers this script's regime with a filler; this
+script remains the filler-less anchored polish). Run the splat-enhancement loop on a scene (docs/research/splat-enhancement-study.md).
 
 Anchored, densification-controlled refinement driven by the backbone coverage signal.
 Reads the input PLY read-only and writes a NEW ply.

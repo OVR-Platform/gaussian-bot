@@ -1,4 +1,6 @@
-"""Unified pipeline: the robot walks the scene, marks poses to improve, then Difix fills them.
+"""SUPERSEDED by ``uv run gaussian-robot enhance`` (ADR-0011) — kept for research reference.
+
+The CLI wraps exactly this pipeline (explore → Difix fill → NEW ply + before/after GIF). Unified pipeline: the robot walks the scene, marks poses to improve, then Difix fills them.
 
 This wires the two halves of the project together. A head-less densify session
 (``session.build_session`` → ``Explorer.run_session``) explores the splat and auto-marks the
@@ -35,16 +37,22 @@ from gaussian_robot.enhance.explore_fill import explore_and_fill
 def _build_argparser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Robot-driven Difix3D+ gap-fill + before/after movie")
     ap.add_argument("--ply", required=True, help="Input 3DGS PLY (READ-ONLY)")
-    ap.add_argument("--model", required=True, help="COLMAP sparse model dir (cameras.bin/images.bin)")
+    ap.add_argument(
+        "--model", required=True, help="COLMAP sparse model dir (cameras.bin/images.bin)"
+    )
     ap.add_argument("--images", required=True, help="Dir with the training images")
-    ap.add_argument("--out", default=None, help="Output PLY (NEW); default data/enhanced/<stem>_filled.ply")
+    ap.add_argument(
+        "--out", default=None, help="Output PLY (NEW); default data/enhanced/<stem>_filled.ply"
+    )
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--camera-id", type=int, default=1)
     ap.add_argument("--downscale", type=float, default=0.5)
     # robot session
     ap.add_argument("--num-seeds", type=int, default=6, help="Walks launched across the scene")
     ap.add_argument("--max-steps", type=int, default=40, help="Steps per walk")
-    ap.add_argument("--real-vlm", action="store_true", help="Drive the walk with Qwen/vLLM (needs server)")
+    ap.add_argument(
+        "--real-vlm", action="store_true", help="Drive the walk with Qwen/vLLM (needs server)"
+    )
     ap.add_argument("--no-aerial", action="store_true", help="Disable the aerial gap-survey walk")
     ap.add_argument("--up-axis", default="auto")
     # fill
@@ -72,10 +80,14 @@ def _build_argparser() -> argparse.ArgumentParser:
         "densification ON. The recommended way to get a real, stable enhancement.",
     )
     ap.add_argument("--steps", type=int, default=12, help="Progressive: number of growth steps")
-    ap.add_argument("--iters-per-step", type=int, default=150, help="Progressive: distill iters/step")
+    ap.add_argument(
+        "--iters-per-step", type=int, default=150, help="Progressive: distill iters/step"
+    )
     # movie
     ap.add_argument("--no-movie", action="store_true", help="Skip the before/after GIF")
-    ap.add_argument("--movie-out", default=None, help="Before/after GIF path; default <out>.before_after.gif")
+    ap.add_argument(
+        "--movie-out", default=None, help="Before/after GIF path; default <out>.before_after.gif"
+    )
     ap.add_argument("--movie-max-frames", type=int, default=240)
     return ap
 
@@ -93,7 +105,9 @@ def main() -> int:
 
     print(f"Explore→fill {in_path.name} (read-only) -> {out_path}")
     print(f"  robot: seeds={args.num_seeds} max_steps={args.max_steps} real_vlm={args.real_vlm}")
-    print(f"  fill:  filler={args.filler} dtype={args.filler_dtype} rounds={args.rounds} iters={args.iters}")
+    print(
+        f"  fill:  filler={args.filler} dtype={args.filler_dtype} rounds={args.rounds} iters={args.iters}"
+    )
 
     report = explore_and_fill(
         args.ply,
@@ -127,20 +141,28 @@ def main() -> int:
 
     fill = report.fill
     assert fill is not None
-    print(f"\n  robot walks: {report.n_walks}/{report.n_seeds} seeds   marks (poses to improve): {report.n_marks}")
+    print(
+        f"\n  robot walks: {report.n_walks}/{report.n_seeds} seeds   marks (poses to improve): {report.n_marks}"
+    )
     print(f"  trajectory poses: {len(report.trajectory)}   up_axis: {report.up_axis}")
     print(f"  coverage gaps: {fill.gap_count}   gap poses filled/round: {fill.n_gap_poses}")
     print(f"  gaussians: {fill.n_gaussians_before} -> {fill.n_gaussians_after}")
-    print(f"  rounds run: {fill.rounds_run}   per-round PSNR: {[round(x, 3) for x in fill.per_round_psnr]}")
-    print(f"  fill diag: mask_frac={fill.fill_mask_frac:.3f}  delta={fill.fill_delta:.4f}"
-          f"{'  ⚠ near-no-op fill (empty mask / weak reference)' if fill.fill_delta < 1e-3 else ''}")
+    print(
+        f"  rounds run: {fill.rounds_run}   per-round PSNR: {[round(x, 3) for x in fill.per_round_psnr]}"
+    )
+    print(
+        f"  fill diag: mask_frac={fill.fill_mask_frac:.3f}  delta={fill.fill_delta:.4f}"
+        f"{'  ⚠ near-no-op fill (empty mask / weak reference)' if fill.fill_delta < 1e-3 else ''}"
+    )
     print(f"  held-out real-view PSNR: {fill.psnr_before:.3f} dB  ->  {fill.psnr_after:.3f} dB")
     dev = args.device if args.device.startswith("cuda") else None
     print(f"  peak VRAM: {torch.cuda.max_memory_allocated(dev) / 1e9:.2f} GB")
     print(f"  wrote: {fill.out_ply}")
 
     if not args.no_movie:
-        movie_out = Path(args.movie_out) if args.movie_out else out_path.with_suffix(".before_after.gif")
+        movie_out = (
+            Path(args.movie_out) if args.movie_out else out_path.with_suffix(".before_after.gif")
+        )
         print(f"\n  rendering before/after path movie -> {movie_out}")
         torch.cuda.reset_peak_memory_stats()
         info = render_before_after_gif(
@@ -154,7 +176,9 @@ def main() -> int:
             max_frames=args.movie_max_frames,
         )
         if info.get("ok"):
-            print(f"  movie: {info['n_frames']} frames, {info['n_marks']} marks  -> {info['out_gif']}")
+            print(
+                f"  movie: {info['n_frames']} frames, {info['n_marks']} marks  -> {info['out_gif']}"
+            )
         else:
             print(f"  movie skipped: {info.get('error')}")
 

@@ -53,6 +53,35 @@ uv run mypy
 uv run pytest
 ```
 
+## Enhance a splat (fix broken / under-observed gaussians)
+
+The supported path (ADR-0011) is one command — the robot explores the scene,
+marks under-observed viewpoints, the reference-conditioned Difix3D+ filler
+cleans them, and the result is distilled into a **new** `.ply` (the source is
+never touched):
+
+```bash
+uv sync --extra gsplat   # renderer + distiller
+uv pip install diffusers accelerate peft safetensors  # Difix filler deps
+
+uv run gaussian-robot enhance /path/scene/points.ply \
+    --out data/enhanced/scene_enhanced.ply \
+    --colmap /path/scene/sparse/0 \
+    --images /path/scene/images \
+    --report data/enhanced/report.json
+```
+
+Outputs: the new `.ply`, a `[BEFORE | AFTER | map]` fly-through GIF along the
+robot's path, the held-out **Δ-PSNR** regression guard, and the fill-phase
+**peak VRAM** (the whole loop fits a single 24 GB card; the Difix forward is
+fp16 by default). Opt-in quality levers: `--denoise-steps N` (multi-step
+τ-ladder) and `--sdedit` (ArtiFixer-style opacity-mix latent init, requires
+`N ≥ 2`). See `uv run gaussian-robot enhance --help` for the full knob set.
+
+**Regime honesty:** this pays off on *sparse / under-observed* captures. On a
+dense, well-covered scene the gate measures ~0 gain and the fill is a no-op by
+design (see [`docs/research/README.md`](docs/research/README.md)).
+
 ## Project layout
 
 ```
