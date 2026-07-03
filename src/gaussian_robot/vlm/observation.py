@@ -24,10 +24,15 @@ class Observation:
         Typical order: ``"rgb"``, ``"depth"``, ``"map"`` (ADR-0005).
     prompt:
         The fixed task prompt + one live state line.
+    instruction:
+        The natural-language goal of a task/VLN episode (ADR-0012), or ``None``
+        in coverage mode. Also woven into ``prompt`` for the VLM; carried
+        structured here so recorders/evaluators need not re-parse the prompt.
     """
 
     panels: list[tuple[str, np.ndarray]] = field(default_factory=list)
     prompt: str = ""
+    instruction: str | None = None
 
     def __post_init__(self) -> None:
         for label, img in self.panels:

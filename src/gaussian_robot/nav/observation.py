@@ -384,6 +384,7 @@ class ObservationBuilder:
                 ("map", map_panel),
             ],
             prompt="\n".join(parts),
+            instruction=self.task if task_mode else None,
         )
         return obs, result
 

@@ -19,7 +19,7 @@ from typing import Protocol, runtime_checkable
 
 import numpy as np
 
-from gaussian_robot.metrics.coverage import CoverageState, floor_coverage
+from gaussian_robot.metrics.coverage import CoverageState, floor_coverage, floor_xy
 from gaussian_robot.nav.action import Action
 from gaussian_robot.render.camera import Pose
 
@@ -183,6 +183,35 @@ class TaskStop:
         return self._done
 
 
+@dataclass
+class GoalReached:
+    """Instruction-tied geometric success (ADR-0012): stop on arrival at the goal position.
+
+    When a navigate episode has a resolvable target, success is *measured*, not declared:
+    reaching within ``eps`` (floor-plane metres) of ``target`` ends the walk with reason
+    ``goal_reached`` regardless of what the VLM says. Compose it BEFORE :class:`TaskStop`
+    so a simultaneous VLM ``stop`` on arrival reports the geometric reason.
+    """
+
+    target: np.ndarray  # (3,) world position of the goal
+    eps: float
+    up_axis: str = "y"
+    reason: str = "goal_reached"
+    _reached: bool = False
+
+    def reset(self) -> None:
+        self._reached = False
+
+    def update(self, ctx: WalkContext) -> None:
+        cur = floor_xy(ctx.pose.position, self.up_axis)[0]
+        goal = floor_xy(self.target, self.up_axis)[0]
+        if float(np.linalg.norm(cur - goal)) <= self.eps:
+            self._reached = True
+
+    def should_stop(self) -> bool:
+        return self._reached
+
+
 def any_walk_stop(policies: list[StopPolicy]) -> bool:
     """OR-composition for walk-level policies (excluding step counting)."""
     return any(p.should_stop() for p in policies)
@@ -219,13 +248,14 @@ class TaskComplete:
     """Task-mode session terminator: end once a walk finished with the task done.
 
     Task runs are a single goal-directed walk; when that walk ends because the VLM
-    declared the task complete (:class:`TaskStop`), the session is over.
+    declared the task complete (:class:`TaskStop`) or the geometric goal was reached
+    (:class:`GoalReached`, ADR-0012), the session is over.
     """
 
     reason: str = "task_complete"
 
     def should_stop(self, ctx: SessionContext) -> bool:
-        return ctx.last_walk_reason == "task_complete"
+        return ctx.last_walk_reason in ("task_complete", "goal_reached")
 
 
 @dataclass
