@@ -55,6 +55,22 @@ class VLLMServerProcess:
         time.sleep(1.0)
         return self.status(config)
 
+    def wait_ready(self, config: RunConfig, *, timeout: float = 600.0, poll: float = 2.0) -> bool:
+        """Block until the OpenAI endpoint answers, the child dies, or ``timeout`` passes.
+
+        The dashboard polls readiness from the browser; a headless caller (the ``navigate``
+        CLI) must block here instead — a vLLM cold start takes minutes.
+        """
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            process = self._process
+            if process is None or process.poll() is not None:
+                return False
+            if _server_ready(config):
+                return True
+            time.sleep(poll)
+        return _server_ready(config)
+
     def stop(self) -> VLLMStatus:
         process = self._process
         if process is not None and process.poll() is None:
