@@ -27,7 +27,11 @@ def plan_movie_poses(
 
     Pure (no GPU): factored out so the frame plan can be unit-tested without a renderer.
     """
-    poses = interpolate_walk_poses(trajectory, per_segment) if len(trajectory) >= 2 else list(trajectory)
+    poses = (
+        interpolate_walk_poses(trajectory, per_segment)
+        if len(trajectory) >= 2
+        else list(trajectory)
+    )
     if len(poses) > max_frames:
         idx = np.linspace(0, len(poses) - 1, max_frames).astype(int)
         poses = [poses[i] for i in idx]
@@ -47,7 +51,9 @@ def map_extent(points: np.ndarray, *, margin: float = 1.0) -> tuple[np.ndarray, 
     return lo, span
 
 
-def _render_pass(ply_path: str | Path, poses: list[Pose], intr: CameraIntrinsics, device: str) -> list[np.ndarray]:
+def _render_pass(
+    ply_path: str | Path, poses: list[Pose], intr: CameraIntrinsics, device: str
+) -> list[np.ndarray]:
     """Render every pose from one cloud, return RGB arrays, then release the cloud + CUDA cache."""
     from gaussian_robot.backends.gsplat_renderer import GsplatRenderer  # noqa: PLC0415
 
@@ -143,4 +149,9 @@ def render_before_after_gif(
     out = Path(out_gif)
     out.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(out, save_all=True, append_images=frames[1:], duration=duration_ms, loop=0)
-    return {"ok": True, "out_gif": str(out), "n_frames": len(frames), "n_marks": int(mark_f.shape[0])}
+    return {
+        "ok": True,
+        "out_gif": str(out),
+        "n_frames": len(frames),
+        "n_marks": int(mark_f.shape[0]),
+    }
