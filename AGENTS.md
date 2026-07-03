@@ -57,6 +57,10 @@ Run lint + mypy + pytest before declaring a task done.
 `data/` is gitignored. Never commit a `.ply`, `.splat`, model weights, or
 rendered images. Put one-off research scripts in `scripts/`.
 
+In `experiments/`, only code and tiny JSON fixtures are tracked; every heavy
+output (GIF/PNG/video/arrays/logs) is gitignored — see `experiments/README.md`.
+Agent scratch worktrees live under `.claude/worktrees/` and are gitignored.
+
 ## Committing
 
 - Don't commit unless explicitly asked.
