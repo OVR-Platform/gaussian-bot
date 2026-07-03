@@ -73,6 +73,21 @@ mlruns/
 *.safetensors
 *.bin
 
+# ---- Experiments (code + tiny JSON fixtures are tracked; heavy outputs are not) ----
+experiments/**/*.gif
+experiments/**/*.png
+experiments/**/*.jpg
+experiments/**/*.jpeg
+experiments/**/*.mp4
+experiments/**/*.webm
+experiments/**/*.npy
+experiments/**/*.npz
+experiments/**/logs/
+experiments/**/out/
+
+# ---- Agent scratch worktrees (never commit) ----
+.claude/worktrees/
+
 # ---- Logs ----
 logs/
 *.log
