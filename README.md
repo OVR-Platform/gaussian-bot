@@ -53,6 +53,33 @@ uv run mypy
 uv run pytest
 ```
 
+## Navigate with an instruction (VLN)
+
+One command runs a goal-conditioned episode against the real stack — gsplat
+renderer + Qwen served via vLLM (ADR-0012):
+
+```bash
+uv sync --extra gsplat --extra vlm   # renderer + OpenAI-compatible client
+
+# spawn vLLM and block until ready, then run the episode
+uv run gaussian-robot navigate /path/scene/points.ply \
+    --instruction "go to the blue mat" \
+    --target-xyz "1.9,0.4,-3.4" \
+    --start-vllm
+
+# or against an already-running server / with the scripted demo VLM
+uv run gaussian-robot navigate /path/scene/points.ply \
+    --instruction "find the desk" --vlm-url http://127.0.0.1:8000/v1
+```
+
+Outputs: `data/episodes/episode.json` (trajectory + outcome),
+`episode.gif` (`[robot view | top-down trail+goal]`), and a printed
+`success / stop_reason / steps` line. **Success provenance is explicit**:
+with `--target-xyz` (goal coordinates, e.g. from the scene graph) arrival is
+*measured* (`geometric`, radius `--goal-eps`); without it, the VLM declaring
+completion is reported as `vlm_declared` — unverified. The office-scene smoke
+is `scripts/navigate_smoke.py`.
+
 ## Project layout
 
 ```
