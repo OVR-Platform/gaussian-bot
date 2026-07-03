@@ -95,9 +95,13 @@ def enhance(
         bool,
         typer.Option(
             "--progressive/--rounds-mode",
-            help="Progressive Difix3D+ (recommended) vs the legacy rounds-based fill.",
+            help=(
+                "Rounds-based fill (default: the measured-safe recipe) vs the faithful "
+                "progressive Difix3D+ loop (geometry moves + densify — measured to regress on "
+                "the office scene; the gate reverts it to a no-op there)."
+            ),
         ),
-    ] = True,
+    ] = False,
     steps: Annotated[int, typer.Option(help="Progressive steps (only with --progressive).")] = 12,
     iters_per_step: Annotated[int, typer.Option(help="Distill iters per progressive step.")] = 150,
     rounds: Annotated[int, typer.Option(help="Fill rounds (only with --rounds-mode).")] = 3,

@@ -25,9 +25,12 @@ knobs that nothing consumed (mode `"enhance"` silently ran as densify).
    session), marks under-observed viewpoints, the reference-conditioned Difix
    filler cleans them, the distiller writes a **NEW** ply. It emits a
    before/after GIF, prints the held-out Δ-PSNR guard and the fill-phase peak
-   VRAM, and can dump a JSON report. The default is the progressive Difix3D+
-   loop (`--rounds-mode` selects the legacy rounds path). The three research
-   scripts are marked superseded and kept for reference;
+   VRAM, and can dump a JSON report. The default is the **rounds** fill
+   (frozen geometry, gentle LRs) — the measured-safe recipe the research
+   validated; `--progressive` opts into the faithful Difix3D+ loop (geometry
+   moves + densify), which measured an immediate ≥0.9 dB held-out regression
+   on the office scene (the gate reverts it to a no-op there). The three
+   research scripts are marked superseded and kept for reference;
    `milestone0_identity_distill.py` stays as the plumbing gate.
 2. **Closeness levers on the vendored backbone.**
    - **fp16 is the CLI default** (`--dtype float16`), halving the measured
