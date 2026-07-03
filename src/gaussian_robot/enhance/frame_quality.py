@@ -24,7 +24,8 @@ def _to_gray(rgb: np.ndarray) -> np.ndarray:
     a = np.asarray(rgb, dtype=np.float32)
     if a.max() > 1.5:  # uint8 -> [0,1]
         a = a / 255.0
-    return a[..., 0] * 0.299 + a[..., 1] * 0.587 + a[..., 2] * 0.114
+    gray: np.ndarray = a[..., 0] * 0.299 + a[..., 1] * 0.587 + a[..., 2] * 0.114
+    return gray
 
 
 def _conv2d_valid(img: np.ndarray, kernel: np.ndarray) -> np.ndarray:
@@ -79,4 +80,5 @@ def rank_degraded(
     covered = np.nonzero(ho <= max_hole)[0]
     if covered.size == 0:
         return []
-    return covered[np.argsort(sh[covered])].tolist()  # ascending sharpness = blurriest first
+    order = covered[np.argsort(sh[covered])]  # ascending sharpness = blurriest first
+    return [int(i) for i in order]

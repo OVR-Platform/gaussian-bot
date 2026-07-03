@@ -10,9 +10,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import pytest
 
-from gaussian_robot.backends.gsplat_renderer import load_gaussian_cloud
-from gaussian_robot.splat.ply_writer import write_gaussian_ply
+pytest.importorskip("torch")  # the loader stores tensors; gsplat_renderer imports both
+pytest.importorskip("gsplat")
+
+from gaussian_robot.backends.gsplat_renderer import load_gaussian_cloud  # noqa: E402
+from gaussian_robot.splat.ply_writer import write_gaussian_ply  # noqa: E402
 
 
 def _synthetic(
