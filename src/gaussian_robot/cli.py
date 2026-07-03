@@ -154,6 +154,8 @@ def navigate(
         "aerial_survey": False,
         "coverage_3d": False,
         "cuda_device": device,
+        # Headless: the live-dashboard tween would render extra frames per step for no viewer.
+        "live_tween_frames": 0,
     }
     if poses is not None:
         overrides["poses_path"] = str(poses)
