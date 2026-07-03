@@ -80,6 +80,8 @@ def explore_and_fill(
     # --- fill ---
     filler: str = "difix",
     filler_dtype: str = "float16",
+    denoise_steps: int = 1,
+    sdedit: bool = False,
     iters: int = 300,
     rounds: int = 3,
     n_gap_poses: int = 12,
@@ -135,9 +137,7 @@ def explore_and_fill(
 
     trajectory = [p for r in results for p in r.poses]
     marks = [m for r in results for m in r.marks]
-    select_centers = (
-        np.array([m.position for m in marks], dtype=np.float64) if marks else None
-    )
+    select_centers = np.array([m.position for m in marks], dtype=np.float64) if marks else None
 
     # Resolve the aggressive preset (explicit args win over it).
     if aggressive:
@@ -167,6 +167,8 @@ def explore_and_fill(
             downscale=downscale,
             filler=filler,
             filler_dtype=filler_dtype,
+            denoise_steps=denoise_steps,
+            sdedit=sdedit,
             steps=steps,
             iters_per_step=iters_per_step,
             n_gap_poses=n_gap_poses,
@@ -182,9 +184,14 @@ def explore_and_fill(
             ),
         )
         return ExploreFillReport(
-            n_seeds=len(seeds), n_walks=len(results), n_marks=len(marks),
-            up_axis=resolved_up, trajectory=trajectory, marks=marks,
-            fill=fill, out_ply=fill.out_ply,
+            n_seeds=len(seeds),
+            n_walks=len(results),
+            n_marks=len(marks),
+            up_axis=resolved_up,
+            trajectory=trajectory,
+            marks=marks,
+            fill=fill,
+            out_ply=fill.out_ply,
         )
     fill = fill_gaps_scene(
         ply_path,
@@ -196,6 +203,8 @@ def explore_and_fill(
         downscale=downscale,
         filler=filler,
         filler_dtype=filler_dtype,
+        denoise_steps=denoise_steps,
+        sdedit=sdedit,
         iters=iters,
         rounds=rounds,
         n_gap_poses=n_gap_poses,

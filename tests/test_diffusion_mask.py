@@ -11,11 +11,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from gaussian_robot.enhance.fillers import DiffusionFiller
-from gaussian_robot.render.base import RenderResult
-from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose
+pytest.importorskip("torch")  # fillers -> mask imports torch at module level
 
-pytest.importorskip("torch")
+from gaussian_robot.enhance.fillers import DiffusionFiller  # noqa: E402
+from gaussian_robot.render.base import RenderResult  # noqa: E402
+from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose  # noqa: E402
 
 
 def _degraded(rgb: np.ndarray) -> RenderResult:
@@ -28,7 +28,15 @@ def _degraded(rgb: np.ndarray) -> RenderResult:
 def _filler(generated: np.ndarray, **kw: object) -> DiffusionFiller:
     f = DiffusionFiller(filler_mode="difix", device="cpu", **kw)  # type: ignore[arg-type]
     f._pipe = object()  # make load() a no-op (don't fetch weights)
-    f._difix = lambda render_u8, ref_u8: generated  # type: ignore[assignment]
+
+    def _fake_difix(
+        render_u8: np.ndarray,
+        ref_u8: np.ndarray | None,
+        alpha: np.ndarray | None = None,
+    ) -> np.ndarray:
+        return generated
+
+    f._difix = _fake_difix  # type: ignore[method-assign]
     return f
 
 
@@ -42,6 +50,7 @@ def test_disagreement_mask_keeps_difix_where_it_changed_the_image() -> None:
     sv = f.fill(_degraded(render), references=[])
 
     # alpha-only mask would be ~0 (alpha=1). Disagreement lifts the CHANGED half toward 1.
+    assert sv.mask is not None
     assert sv.mask[:, : w // 2].mean() > 0.8  # left: trust Difix
     assert sv.mask[:, w // 2 :].mean() < 0.05  # right: unchanged -> protected
     # The target adopts Difix on the left, keeps the render on the right.
@@ -57,5 +66,6 @@ def test_disagreement_off_falls_back_to_alpha_only() -> None:
 
     sv = f.fill(_degraded(render), references=[])
     # With alpha=1 and no disagreement term, the mask is ~empty -> target ~= render (the old bug).
+    assert sv.mask is not None
     assert sv.mask.mean() < 0.05
     assert np.allclose(sv.target_rgb, 0.5, atol=5e-3)

@@ -221,7 +221,7 @@ class GaussianDistiller:
             # opacities are masked; means/scales/quats are NOT, so if a caller ever unfreezes
             # geometry together with gap-restriction, fill views could still move non-gap geometry.
             if mask is not None and self.gap_index is not None:
-                gi = (self.gap_index.to(self.device).float() * self.fill_gap_gain)
+                gi = self.gap_index.to(self.device).float() * self.fill_gap_gain
                 for pname in ("sh", "opacities"):
                     g = self.params[pname].grad
                     if g is not None:
@@ -268,12 +268,17 @@ class GaussianDistiller:
         )
 
     @staticmethod
-    def reset_peak_vram() -> None:
+    def reset_peak_vram(device: str | None = None) -> None:
         if torch.cuda.is_available():
-            torch.cuda.reset_peak_memory_stats()
+            torch.cuda.reset_peak_memory_stats(device)
 
     @staticmethod
-    def peak_vram_gb() -> float:
+    def peak_vram_gb(device: str | None = None) -> float:
+        """Peak allocated CUDA memory in GB.
+
+        ``device=None`` reads the CURRENT device — on a multi-GPU box pass the run's device
+        explicitly or the figure is another card's.
+        """
         if not torch.cuda.is_available():
             return 0.0
-        return float(torch.cuda.max_memory_allocated()) / (1024.0**3)
+        return float(torch.cuda.max_memory_allocated(device)) / (1024.0**3)

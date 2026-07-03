@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import struct
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
 
-from gaussian_robot.enhance import orchestrator
-from gaussian_robot.enhance.capture_images import RealView
-from gaussian_robot.enhance.fillers import DiffusionFiller, GeometricFiller
-from gaussian_robot.enhance.orchestrator import (
+pytest.importorskip("torch")  # orchestrator imports torch (and, via distiller, gsplat)
+pytest.importorskip("gsplat")
+
+from gaussian_robot.backends.gsplat_renderer import GaussianCloud  # noqa: E402
+from gaussian_robot.enhance import orchestrator  # noqa: E402
+from gaussian_robot.enhance.capture_images import RealView  # noqa: E402
+from gaussian_robot.enhance.fillers import DiffusionFiller, GeometricFiller  # noqa: E402
+from gaussian_robot.enhance.orchestrator import (  # noqa: E402
     _fill_gap_views,
     _infer_up_axis,
     _interleave,
@@ -29,10 +34,10 @@ from gaussian_robot.enhance.orchestrator import (
     synthesize_marked_pairs,
     synthesize_near_view_poses,
 )
-from gaussian_robot.enhance.protocols import SupervisionView
-from gaussian_robot.render.base import RenderResult
-from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose
-from gaussian_robot.session import look_at
+from gaussian_robot.enhance.protocols import SupervisionView  # noqa: E402
+from gaussian_robot.render.base import RenderResult  # noqa: E402
+from gaussian_robot.render.camera import Camera, CameraIntrinsics, Pose  # noqa: E402
+from gaussian_robot.session import look_at  # noqa: E402
 
 
 def test_synthesize_gap_poses_frames_each_gap() -> None:
@@ -127,7 +132,9 @@ def test_reference_prefers_view_that_frames_the_gap() -> None:
 
     vis = synthesize_near_view_poses(views, gap, intr, up_axis="y", n_poses=1, ref_select="visible")
     assert vis[0][1].name == b.name  # picked the framing camera
-    near = synthesize_near_view_poses(views, gap, intr, up_axis="y", n_poses=1, ref_select="nearest")
+    near = synthesize_near_view_poses(
+        views, gap, intr, up_axis="y", n_poses=1, ref_select="nearest"
+    )
     assert near[0][1].name == a.name  # legacy: nearest by translation, even though it's blind
 
 
@@ -137,8 +144,10 @@ def test_synthesize_marked_pairs_uses_mark_as_frame_and_aligned_reference() -> N
     # Two real views near a mark: one looks the SAME way as the mark, one looks opposite.
     aligned = _real_view(np.array([0.1, 0.0, -1.0]), np.array([0.1, 0.0, 5.0]), intr, 0)  # +z
     opposed = _real_view(np.array([0.0, 0.0, -1.0]), np.array([0.0, 0.0, -5.0]), intr, 1)  # -z
-    mark = Pose(position=np.array([0.0, 0.0, 0.0]), rotation=look_at(
-        np.zeros(3), np.array([0.0, 0.0, 5.0]), "y"))  # mark looks +z
+    mark = Pose(
+        position=np.array([0.0, 0.0, 0.0]),
+        rotation=look_at(np.zeros(3), np.array([0.0, 0.0, 5.0]), "y"),
+    )  # mark looks +z
 
     pairs = synthesize_marked_pairs([mark], [aligned, opposed], intr)
 
@@ -220,8 +229,19 @@ def test_build_filler_dispatch() -> None:
 
 def test_build_filler_dtype_selects_precision() -> None:
     # Default keeps NVIDIA's reference precision; fp16 is the opt-in VRAM-headroom lever.
-    assert build_filler("difix")._dtype_name == "float32"
-    assert build_filler("difix", dtype="float16")._dtype_name == "float16"
+    f32 = build_filler("difix")
+    f16 = build_filler("difix", dtype="float16")
+    assert isinstance(f32, DiffusionFiller) and f32._dtype_name == "float32"
+    assert isinstance(f16, DiffusionFiller) and f16._dtype_name == "float16"
+
+
+def test_build_filler_denoise_steps_and_sdedit() -> None:
+    # The closeness levers thread through: multi-step τ-ladder + SDEdit opacity-mix (ADR-0011).
+    f = build_filler("difix", denoise_steps=3, sdedit=True)
+    assert isinstance(f, DiffusionFiller)
+    assert f._num_steps == 3 and f._sdedit is True
+    with pytest.raises(ValueError, match="sdedit=True requires num_inference_steps >= 2"):
+        build_filler("difix", denoise_steps=1, sdedit=True)
 
 
 class _FakeRenderer:
@@ -261,20 +281,23 @@ def test_fill_gap_views_passes_true_reference_pose(monkeypatch: pytest.MonkeyPat
     orchestrator seam without needing the GPU (renderer + image loader are stubbed).
     """
     monkeypatch.setattr(orchestrator, "GsplatRenderer", _FakeRenderer)
-    monkeypatch.setattr(orchestrator, "load_image", lambda path, w, h: np.zeros((h, w, 3), np.float32))
+    monkeypatch.setattr(
+        orchestrator, "load_image", lambda path, w, h: np.zeros((h, w, 3), np.float32)
+    )
 
     intr = CameraIntrinsics(fx=8.0, fy=8.0, cx=4.0, cy=4.0, width=8, height=8)
     ref_view = _real_view(np.array([1.0, 0.0, 0.0]), np.zeros(3), intr, 0)
     gap_cam = Camera(
-        pose=Pose(position=np.array([0.5, 0.0, 0.5]), rotation=look_at(
-            np.array([0.5, 0.0, 0.5]), np.zeros(3), "y"
-        )),
+        pose=Pose(
+            position=np.array([0.5, 0.0, 0.5]),
+            rotation=look_at(np.array([0.5, 0.0, 0.5]), np.zeros(3), "y"),
+        ),
         intrinsics=intr,
     )
     rec = _RecordingFiller()
 
     out = _fill_gap_views(
-        cloud=None,  # consumed only by the stubbed renderer
+        cloud=cast(GaussianCloud, None),  # consumed only by the stubbed renderer
         gap_pairs=[(gap_cam, ref_view)],
         ref_size=(8, 8),
         filler="difix",

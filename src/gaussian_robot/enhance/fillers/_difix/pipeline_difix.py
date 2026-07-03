@@ -844,6 +844,7 @@ class DifixPipeline(
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.FloatTensor] = None,
+        init_mask: Optional[torch.FloatTensor] = None,
         prompt_embeds: Optional[torch.FloatTensor] = None,
         negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         ip_adapter_image: Optional[PipelineImageInput] = None,
@@ -1030,6 +1031,34 @@ class DifixPipeline(
             generator,
         )
 
+        # LOCAL PATCH (gaussian-robot): SDEdit-style opacity-mixing latent init (ArtiFixer recipe,
+        # docs/research/artifixer-closeness-24gb.md Step 3). `init_mask` is O_z — accumulated splat
+        # opacity max-pooled to LATENT resolution (mask.downscale_to_latent). Observed latent cells
+        # (O_z→1) keep the encoded degraded latent; empty cells (O_z→0) start from pure noise:
+        #     z_mix = O_z * z_deg + (1 - O_z) * eps
+        # then z_mix is noised to the FIRST timestep so the denoise loop below has an honest x_t.
+        # Applied only to the degraded image's latent; the reference latent stays a clean encode.
+        # Meaningful only with a multi-step schedule — a single fixed-τ step cannot denoise a
+        # noised init (the caller guards this).
+        if init_mask is not None:
+            n_img = image.shape[0]
+            z_img = latents[:n_img]
+            m = init_mask.to(device=z_img.device, dtype=z_img.dtype)
+            if m.dim() == 2:
+                m = m[None, None]
+            elif m.dim() == 3:
+                m = m[:, None]
+            if m.shape[-2:] != z_img.shape[-2:]:
+                raise ValueError(
+                    f"init_mask spatial size {tuple(m.shape[-2:])} does not match the latent size "
+                    f"{tuple(z_img.shape[-2:])}; pool the opacity to latent resolution first."
+                )
+            noise = randn_tensor(z_img.shape, generator=generator, device=z_img.device, dtype=z_img.dtype)
+            z_mix = m * z_img + (1.0 - m) * noise
+            t0 = timesteps[:1].to(z_img.device)
+            z_noised = self.scheduler.add_noise(z_mix, noise, t0)
+            latents = torch.cat([z_noised, latents[n_img:]], dim=0)
+
         if ref_image is not None:
             prompt_embeds = torch.cat([prompt_embeds, prompt_embeds], dim=0)
 
@@ -1048,6 +1077,14 @@ class DifixPipeline(
             ).to(device=device, dtype=latents.dtype)
 
         # 7. Denoising loop
+        # LOCAL PATCH (gaussian-robot): across a MULTI-step schedule the reference latent must stay
+        # a clean encode — it is conditioning for the reference-mixing attention, not a sample being
+        # generated (it is discarded after the loop). Without this, scheduler.step would "denoise"
+        # the clean reference N-1 times, corrupting the appearance signal later steps borrow from.
+        # Single-step behaviour is untouched (the stepped ref half was already thrown away).
+        ref_latents_fixed = (
+            latents[image.shape[0] :].clone() if ref_image is not None and len(timesteps) > 1 else None
+        )
         num_warmup_steps = len(timesteps) - num_inference_steps * self.scheduler.order
         self._num_timesteps = len(timesteps)
         with self.progress_bar(total=num_inference_steps) as progress_bar:
@@ -1081,6 +1118,8 @@ class DifixPipeline(
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
+                if ref_latents_fixed is not None:  # LOCAL PATCH: keep the reference latent clean
+                    latents = torch.cat([latents[: image.shape[0]], ref_latents_fixed], dim=0)
 
                 self.vae.decoder.incoming_skip_acts = self.vae.encoder.current_down_blocks
 

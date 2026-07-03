@@ -91,6 +91,9 @@ class FillReport:
     # over the raw render. ``fill_delta ≈ 0`` flags a no-op fill (empty mask / useless reference).
     fill_mask_frac: float = 0.0
     fill_delta: float = 0.0
+    # Peak CUDA memory allocated across the whole fill (load → filler → distill → save), in GB —
+    # the number that proves the run held the single-24GB-card budget.
+    peak_vram_gb: float = 0.0
 
 
 def _psnr(a: np.ndarray, b: np.ndarray) -> float:
@@ -222,7 +225,9 @@ def _pick_reference(
     in_frame = in_front & (u >= 0) & (u < intrinsics.width) & (v >= 0) & (v < intrinsics.height)
     # Off-centre distance in normalized image units (0 = dead centre); the lower, the more the
     # reference squarely frames the gap.
-    offcentre = np.hypot((u - intrinsics.cx) / intrinsics.width, (v - intrinsics.cy) / intrinsics.height)
+    offcentre = np.hypot(
+        (u - intrinsics.cx) / intrinsics.width, (v - intrinsics.cy) / intrinsics.height
+    )
     score = offcentre + dist_tiebreak * (dist / dscale)
 
     if in_frame.any():
@@ -430,7 +435,14 @@ def enhance_scene(
     )
 
 
-def build_filler(filler: str, *, device: str = "cuda:0", dtype: str = "float32") -> ViewFiller:
+def build_filler(
+    filler: str,
+    *,
+    device: str = "cuda:0",
+    dtype: str = "float32",
+    denoise_steps: int = 1,
+    sdedit: bool = False,
+) -> ViewFiller:
     """Construct the requested :class:`ViewFiller`.
 
     ``"difix"`` returns the generative :class:`DiffusionFiller` (the env probe confirmed Difix
@@ -441,13 +453,21 @@ def build_filler(filler: str, *, device: str = "cuda:0", dtype: str = "float32")
     ``dtype`` selects the Difix precision: ``"float32"`` (default) matches NVIDIA's reference tests;
     ``"float16"`` roughly halves the ~8.4 GB peak. fp16 is the cheapest VRAM-headroom lever, but is
     NOT guaranteed bit-for-bit free — validate output quality on a held-out view, since some
-    AutoencoderKL VAEs are unstable in fp16. Ignored by the geometric path.
+    AutoencoderKL VAEs are unstable in fp16. ``denoise_steps`` / ``sdedit`` are the multi-step
+    τ-ladder and opacity-mix latent init (ADR-0011); ``sdedit`` requires ``denoise_steps >= 2``.
+    All three are ignored by the geometric path.
     """
     from gaussian_robot.enhance.fillers import DiffusionFiller, GeometricFiller  # noqa: PLC0415
 
     name = filler.strip().lower()
     if name == "difix":
-        return DiffusionFiller(filler_mode="difix", device=device, dtype=dtype)
+        return DiffusionFiller(
+            filler_mode="difix",
+            device=device,
+            dtype=dtype,
+            num_inference_steps=denoise_steps,
+            sdedit=sdedit,
+        )
     if name in ("geometric", "identity"):
         return GeometricFiller()
     raise ValueError(f"unknown filler {filler!r}; expected 'difix', 'geometric' or 'identity'")
@@ -462,6 +482,8 @@ def _fill_gap_views(
     device: str,
     view_filler: ViewFiller | None,
     filler_dtype: str = "float32",
+    denoise_steps: int = 1,
+    sdedit: bool = False,
     diag_out: list[tuple[float, float]] | None = None,
 ) -> list[SupervisionView]:
     """Render each near-view gap pose DEGRADED, condition on its REAL reference, and fill it.
@@ -491,7 +513,9 @@ def _fill_gap_views(
     chosen = (
         view_filler
         if view_filler is not None
-        else build_filler(filler, device=device, dtype=filler_dtype)
+        else build_filler(
+            filler, device=device, dtype=filler_dtype, denoise_steps=denoise_steps, sdedit=sdedit
+        )
     )
     w, h = ref_size
     gap_supervision: list[SupervisionView] = []
@@ -576,6 +600,8 @@ def _progressive_distill(
     select_centers: np.ndarray | None = None,
     ref_select: str = "visible",
     gate: bool = True,
+    denoise_steps: int = 1,
+    sdedit: bool = False,
 ) -> tuple[list[float], list[float], int, float, float]:
     """Run the progressive fill rounds on ``dist``.
 
@@ -619,15 +645,27 @@ def _progressive_distill(
         if select_centers is not None:
             round_gaps = _select_nearest_gaps(round_gaps, select_centers)
         gap_pairs = synthesize_near_view_poses(
-            views, round_gaps, gap_intrinsics, up_axis=resolved_up,
-            n_poses=n_gap_poses, perturb_frac=perturb, angular_weight=angular_weight,
+            views,
+            round_gaps,
+            gap_intrinsics,
+            up_axis=resolved_up,
+            n_poses=n_gap_poses,
+            perturb_frac=perturb,
+            angular_weight=angular_weight,
             ref_select=ref_select,
         )
         n_pairs = len(gap_pairs)
         round_diag: list[tuple[float, float]] = []
         gap_supervision = _fill_gap_views(
-            current, gap_pairs, ref_size=ref_size, filler=filler,
-            device=device, view_filler=view_filler, filler_dtype=filler_dtype,
+            current,
+            gap_pairs,
+            ref_size=ref_size,
+            filler=filler,
+            device=device,
+            view_filler=view_filler,
+            filler_dtype=filler_dtype,
+            denoise_steps=denoise_steps,
+            sdedit=sdedit,
             diag_out=round_diag,
         )
         last_diag = round_diag
@@ -685,6 +723,8 @@ def fill_gaps_scene(
     angular_weight: float = 0.0,
     view_filler: ViewFiller | None = None,
     filler_dtype: str = "float32",
+    denoise_steps: int = 1,
+    sdedit: bool = False,
     select_centers: np.ndarray | None = None,
     ref_select: str = "visible",
     gate: bool = True,
@@ -733,9 +773,12 @@ def fill_gaps_scene(
     if fill_gap_gain != 1.0 and not restrict_to_gaps:
         # fill_gap_gain only scales the gap-restricted fill gradient; with restriction off it is a
         # silent no-op. Fail loudly rather than let a caller think they are pushing the fill harder.
-        raise ValueError("fill_gap_gain != 1.0 requires restrict_to_gaps=True (it scales the "
-                         "gap-restricted fill gradient; with no gap mask it has no effect)")
+        raise ValueError(
+            "fill_gap_gain != 1.0 requires restrict_to_gaps=True (it scales the "
+            "gap-restricted fill gradient; with no gap mask it has no effect)"
+        )
 
+    GaussianDistiller.reset_peak_vram(device)
     cloud = load_gaussian_cloud(ply_path, device=device)
     views = load_colmap_views(colmap_model_dir, images_dir, camera_id=camera_id)
     if len(views) < eval_stride + 2:
@@ -837,6 +880,8 @@ def fill_gaps_scene(
         select_centers=select_centers,
         ref_select=ref_select,
         gate=gate,
+        denoise_steps=denoise_steps,
+        sdedit=sdedit,
     )
     psnr_after = float(np.mean(after)) if after else 0.0
     # HARD GATE (the round logic already keeps psnr_after >= psnr_before; this is the backstop).
@@ -867,6 +912,7 @@ def fill_gaps_scene(
         per_eval_after=after,
         fill_mask_frac=mask_frac,
         fill_delta=fill_delta,
+        peak_vram_gb=GaussianDistiller.peak_vram_gb(device),
     )
 
 
@@ -875,7 +921,11 @@ def fill_gaps_scene(
 # detail. The one-shot aggressive path (high SH LR + unfrozen geometry, densify OFF) produced
 # rainbow artifacts precisely because existing gaussians were forced to fit inconsistent fills.
 _PROGRESSIVE_LRS: dict[str, float] = {
-    "means": 8e-5, "scales": 2.5e-3, "quats": 5e-4, "opacities": 2e-2, "sh": 1.5e-3,
+    "means": 8e-5,
+    "scales": 2.5e-3,
+    "quats": 5e-4,
+    "opacities": 2e-2,
+    "sh": 1.5e-3,
 }
 
 
@@ -1005,6 +1055,8 @@ def _progressive_step(
     frame_poses: list[Pose] | None = None,
     target_centers: np.ndarray | None = None,
     recover_hole_max: float = 0.10,
+    denoise_steps: int = 1,
+    sdedit: bool = False,
 ) -> tuple[list[SupervisionView], float, list[tuple[float, float]], int, int]:
     """One progressive step: re-render the current cloud, clean the recoverable views, fit.
 
@@ -1027,8 +1079,13 @@ def _progressive_step(
     current = dist.to_cloud()
     if target_centers is not None:
         cand = synthesize_near_view_poses(
-            scene.views, target_centers, scene.gap_intrinsics, up_axis=scene.resolved_up,
-            n_poses=target_centers.shape[0], perturb_frac=perturb, ref_select=ref_select,
+            scene.views,
+            target_centers,
+            scene.gap_intrinsics,
+            up_axis=scene.resolved_up,
+            n_poses=target_centers.shape[0],
+            perturb_frac=perturb,
+            ref_select=ref_select,
         )
         gap_pairs = _recoverable_pairs(current, cand, recover_hole_max)
         n_gaps = len(gap_pairs)
@@ -1039,15 +1096,27 @@ def _progressive_step(
         means_np = current.means.detach().cpu().numpy()
         opac_np = current.opacities.detach().cpu().numpy().reshape(-1)
         cov_r = build_coverage3d(
-            means_np, opac_np, scene.cam_pos, scene.cam_rot, scene.hfov, scene.vfov,
-            scene.lo, scene.hi, grid=gap_grid,
+            means_np,
+            opac_np,
+            scene.cam_pos,
+            scene.cam_rot,
+            scene.hfov,
+            scene.vfov,
+            scene.lo,
+            scene.hi,
+            grid=gap_grid,
         )
         round_gaps = cov_r.gap_centers()
         if select_centers is not None:
             round_gaps = _select_nearest_gaps(round_gaps, select_centers)
         gap_pairs = synthesize_near_view_poses(
-            scene.views, round_gaps, scene.gap_intrinsics, up_axis=scene.resolved_up,
-            n_poses=n_gap_poses, perturb_frac=perturb, ref_select=ref_select,
+            scene.views,
+            round_gaps,
+            scene.gap_intrinsics,
+            up_axis=scene.resolved_up,
+            n_poses=n_gap_poses,
+            perturb_frac=perturb,
+            ref_select=ref_select,
         )
         n_gaps = int(round_gaps.shape[0])
     if not gap_pairs:  # nothing recoverable at this frontier yet — fit anchors only, hold steady
@@ -1055,8 +1124,16 @@ def _progressive_step(
         return pseudo, post, [], 0, n_gaps
     diag: list[tuple[float, float]] = []
     new_fills = _fill_gap_views(
-        current, gap_pairs, ref_size=scene.ref_size, filler=filler,
-        device=device, view_filler=view_filler, filler_dtype=filler_dtype, diag_out=diag,
+        current,
+        gap_pairs,
+        ref_size=scene.ref_size,
+        filler=filler,
+        device=device,
+        view_filler=view_filler,
+        filler_dtype=filler_dtype,
+        denoise_steps=denoise_steps,
+        sdedit=sdedit,
+        diag_out=diag,
     )
     del current
 
@@ -1100,6 +1177,8 @@ def fill_gaps_progressive(
     downscale: float = 0.5,
     filler: str = "difix",
     filler_dtype: str = "float16",
+    denoise_steps: int = 1,
+    sdedit: bool = False,
     steps: int = 12,
     iters_per_step: int = 150,
     n_gap_poses: int = 16,
@@ -1153,9 +1232,16 @@ def fill_gaps_progressive(
     if steps < 1:
         raise ValueError(f"steps must be >= 1, got {steps}")
 
+    GaussianDistiller.reset_peak_vram(device)
     scene = _load_scene_for_fill(
-        ply_path, colmap_model_dir, images_dir, device=device, camera_id=camera_id,
-        downscale=downscale, eval_stride=eval_stride, max_anchor=max_anchor,
+        ply_path,
+        colmap_model_dir,
+        images_dir,
+        device=device,
+        camera_id=camera_id,
+        downscale=downscale,
+        eval_stride=eval_stride,
+        max_anchor=max_anchor,
     )
 
     dist = GaussianDistiller(
@@ -1184,20 +1270,31 @@ def fill_gaps_progressive(
     for s in range(steps):
         perturb = perturb_start + (perturb_end - perturb_start) * (s / max(steps - 1, 1))
         pseudo, post, diag, n_pairs, last_gaps = _progressive_step(
-            dist, scene, view_filler, pseudo,
-            step_idx=s, perturb=perturb, gstep=s * iters_per_step, iters_per_step=iters_per_step,
-            gap_grid=gap_grid, select_centers=select_centers, n_gap_poses=n_gap_poses,
-            ref_select=ref_select, filler=filler, device=device, filler_dtype=filler_dtype,
-            buffer_cap=buffer_cap, frame_poses=frame_poses, target_centers=target_centers,
+            dist,
+            scene,
+            view_filler,
+            pseudo,
+            step_idx=s,
+            perturb=perturb,
+            gstep=s * iters_per_step,
+            iters_per_step=iters_per_step,
+            gap_grid=gap_grid,
+            select_centers=select_centers,
+            n_gap_poses=n_gap_poses,
+            ref_select=ref_select,
+            filler=filler,
+            device=device,
+            filler_dtype=filler_dtype,
+            buffer_cap=buffer_cap,
+            frame_poses=frame_poses,
+            target_centers=target_centers,
             recover_hole_max=recover_hole_max,
+            denoise_steps=denoise_steps,
+            sdedit=sdedit,
         )
         last_diag = diag or last_diag
         per_step.append(post)
-        vram = (
-            torch.cuda.max_memory_allocated(device) / 1e9
-            if torch.cuda.is_available()
-            else 0.0
-        )
+        vram = torch.cuda.max_memory_allocated(device) / 1e9 if torch.cuda.is_available() else 0.0
         md = last_diag[0] if last_diag else (0.0, 0.0)
         print(
             f"  step {s + 1}/{steps}  perturb={perturb:.2f}  gaussians={dist.num_gaussians}  "
@@ -1210,8 +1307,10 @@ def fill_gaps_progressive(
                 best_psnr = post
                 best_snap = dist.state_snapshot()
             elif best_psnr - post > regression_tol_db:
-                print(f"  gate: step regressed > {regression_tol_db}dB, reverting to best & stopping",
-                      flush=True)
+                print(
+                    f"  gate: step regressed > {regression_tol_db}dB, reverting to best & stopping",
+                    flush=True,
+                )
                 break
 
     if gate and best_snap is not None:
@@ -1240,6 +1339,7 @@ def fill_gaps_progressive(
         per_eval_after=after,
         fill_mask_frac=mask_frac,
         fill_delta=fill_delta,
+        peak_vram_gb=GaussianDistiller.peak_vram_gb(device),
     )
 
 

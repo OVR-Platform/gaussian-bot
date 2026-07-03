@@ -7,11 +7,14 @@ plausible, multi-view-consistent content (the Difix3D+ recipe at 24 GB).
 
 What it does, per gap view:
 
-1. Run the vendored :class:`DifixPipeline` (``nvidia/difix_ref``) single-step at ``τ=199`` on the
-   degraded render, conditioned on a reference image (``ref_image``). The pipeline batches
-   ``[image, ref_image]`` and the reference-mixing self-attention in the custom UNet lets the
-   degraded view borrow appearance from the clean reference — this cross-view conditioning is the
-   core of Difix3D+ and is exactly what the prior no-reference path threw away.
+1. Run the vendored :class:`DifixPipeline` (``nvidia/difix_ref``) on the degraded render,
+   conditioned on a reference image (``ref_image``). The pipeline batches ``[image, ref_image]``
+   and the reference-mixing self-attention in the custom UNet lets the degraded view borrow
+   appearance from the clean reference — this cross-view conditioning is the core of Difix3D+ and
+   is exactly what the prior no-reference path threw away. The published recipe is a SINGLE step
+   at ``τ=199`` (the default); ``num_inference_steps>1`` walks a descending τ-ladder instead, and
+   ``sdedit=True`` additionally starts from the ArtiFixer opacity-mix latent init
+   ``z_mix = O_z*z_deg + (1-O_z)*eps`` (real generative fill in fully-empty latent cells).
 2. **Hard recomposite** ``target = M*generated + (1-M)*render`` with ``M = coverage_mask(alpha)``
    so trusted (high-alpha) pixels are taken verbatim from the real render and never disturbed;
    only the holes carry the generated content into the distiller.
@@ -33,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from gaussian_robot.enhance.mask import coverage_mask
+from gaussian_robot.enhance.mask import coverage_mask, downscale_to_latent
 from gaussian_robot.enhance.protocols import SupervisionView
 
 if TYPE_CHECKING:
@@ -118,11 +121,22 @@ class DiffusionFiller:
     dtype:
         Torch dtype; ``"float32"`` matches NVIDIA's reference tests (≈8 GB). ``"float16"`` halves it.
     timestep:
-        Fixed Difix denoise timestep τ (published default 199).
+        Difix denoise timestep τ (published default 199) — the single fixed step, or the TOP of
+        the descending ladder when ``num_inference_steps > 1``.
+    num_inference_steps:
+        ``1`` (default) is the published single-step recipe. ``N > 1`` denoises through a
+        descending τ-ladder ``τ, τ·(N-1)/N, …, τ/N`` — changes output character; gate on held-out
+        PSNR (docs/research/artifixer-closeness-24gb.md Step 2).
+    sdedit:
+        Start from the ArtiFixer opacity-mix latent init (``z_mix = O_z*z_deg + (1-O_z)*eps``,
+        noised to the top of the ladder) so fully-empty latent cells are truly generated rather
+        than decoded from an empty render. Requires ``num_inference_steps >= 2``: on a single
+        fixed-τ step the noised init cannot be denoised and only degrades output.
     prompt:
         Conditioning text (published default ``"remove degradation"``).
     tau_lo, feather:
-        Coverage-mask thresholds (forwarded to :func:`coverage_mask`) for the recomposite.
+        Coverage-mask thresholds (forwarded to :func:`coverage_mask`) for the recomposite; also
+        the source of the ``O_z`` pooling when ``sdedit=True``.
     """
 
     def __init__(
@@ -133,6 +147,8 @@ class DiffusionFiller:
         device: str = "cuda:0",
         dtype: str = "float32",
         timestep: int = _DEFAULT_TIMESTEP,
+        num_inference_steps: int = 1,
+        sdedit: bool = False,
         prompt: str = _DEFAULT_PROMPT,
         tau_lo: float = 0.5,
         feather: float = 0.15,
@@ -144,11 +160,21 @@ class DiffusionFiller:
             raise ValueError(
                 f"filler_mode must be 'difix' or 'geometric-only', got {filler_mode!r}"
             )
+        if num_inference_steps < 1:
+            raise ValueError(f"num_inference_steps must be >= 1, got {num_inference_steps}")
+        if sdedit and num_inference_steps < 2:
+            raise ValueError(
+                "sdedit=True requires num_inference_steps >= 2: a single fixed-τ step cannot "
+                "denoise the noised opacity-mix init — it would only inject noise "
+                "(docs/research/artifixer-closeness-24gb.md Step 3)."
+            )
         self._mode = filler_mode
         self._repo = model
         self._device = device
         self._dtype_name = dtype
         self._timestep = int(timestep)
+        self._num_steps = int(num_inference_steps)
+        self._sdedit = sdedit
         self._prompt = prompt
         self._tau_lo = tau_lo
         self._feather = feather
@@ -198,8 +224,30 @@ class DiffusionFiller:
 
     # ---- the generative step ------------------------------------------------------------
 
-    def _difix(self, render_u8: np.ndarray, ref_u8: np.ndarray | None) -> np.ndarray:
-        """Single-step reference-conditioned Difix. Returns ``(H, W, 3)`` float [0,1]."""
+    def _denoise_timesteps(self) -> list[int]:
+        """Descending τ-ladder for the scheduler: ``[τ]`` single-step, else ``τ·(N-i)/N``.
+
+        The published Difix recipe is one step at τ=199; the multi-step ladder walks from τ down
+        toward 0 in equal fractions (the final scheduler step lands on the clean sample). Entries
+        are deduped/strictly descending so tiny τ with large N stays a valid schedule.
+        """
+        n = self._num_steps
+        raw = [max(1, round(self._timestep * (n - i) / n)) for i in range(n)]
+        ladder = [t for i, t in enumerate(raw) if i == 0 or t < raw[i - 1]]
+        return ladder
+
+    def _difix(
+        self,
+        render_u8: np.ndarray,
+        ref_u8: np.ndarray | None,
+        alpha: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Reference-conditioned Difix forward. Returns ``(H, W, 3)`` float [0,1].
+
+        ``alpha`` (H, W) is only consumed when ``sdedit=True``: it is max-pooled to latent
+        resolution (``O_z``) and drives the opacity-mix latent init inside the vendored pipeline.
+        """
+        import torch  # noqa: PLC0415
         from PIL import Image  # noqa: PLC0415
 
         h, w = render_u8.shape[:2]
@@ -207,12 +255,23 @@ class DiffusionFiller:
         image = Image.fromarray(render_u8[:nh, :nw])
         ref = Image.fromarray(ref_u8[:nh, :nw]) if ref_u8 is not None else None
 
+        init_mask = None
+        if self._sdedit:
+            a = (
+                torch.as_tensor(alpha[:nh, :nw], dtype=torch.float32)
+                if alpha is not None
+                else torch.ones((nh, nw), dtype=torch.float32)
+            )
+            init_mask = downscale_to_latent(a, (nh // 8, nw // 8))
+
+        timesteps = self._denoise_timesteps()
         out = self._pipe(
             self._prompt,
             image=image,
             ref_image=ref,
-            num_inference_steps=1,
-            timesteps=[self._timestep],
+            num_inference_steps=len(timesteps),
+            timesteps=timesteps,
+            init_mask=init_mask,
             guidance_scale=0.0,
             output_type="np",
         ).images[0]
@@ -261,7 +320,7 @@ class DiffusionFiller:
         ref_u8 = _to_u8(references[0].rgb) if references else None
 
         with torch.no_grad():
-            generated = self._difix(render_u8, ref_u8)
+            generated = self._difix(render_u8, ref_u8, alpha)
 
         mask = (
             coverage_mask(
