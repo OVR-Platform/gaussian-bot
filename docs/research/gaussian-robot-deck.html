@@ -393,6 +393,22 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
   .slide.in .anim--scale{ transform:none; }
 }
 
+/* ============================================================
+   FULLSCREEN TOGGLE  (key F / button)
+   ============================================================ */
+.fs-btn{
+  position:fixed; bottom:1.1rem; right:1.1rem; z-index:60;
+  display:inline-flex; align-items:center; gap:.4rem;
+  font-family:var(--mono); font-size:.72rem; letter-spacing:.06em;
+  color:var(--ink-mute); cursor:pointer;
+  background:rgba(20,24,38,.72); border:1px solid var(--line);
+  border-radius:999px; padding:.4rem .7rem;
+  -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  transition:color .2s var(--ease), border-color .2s var(--ease);
+}
+.fs-btn:hover{ color:var(--accent); border-color:rgba(70,230,208,.4); }
+.fs-btn svg{ width:.95rem; height:.95rem; display:block; }
+
 </style>
 <main class="deck">
 <section class="slide slide--cover slide--center">
@@ -423,7 +439,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     </div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">01 / 12</span>
+    <span class="slide__no">01 / 23</span>
   </div>
 </section>
 
@@ -506,7 +522,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     <div class="callout anim" style="--d:240ms"><span class="hl-w">Deliverable:</span> un <span class="hl">set di nuove pose</span> in regioni sotto-campionate &#8594; rese in viste novel (modello generativo) e usate per <strong>densificare lo splat</strong>, per un rendering plausibile e privo di artefatti.</div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">02 / 12</span>
+    <span class="slide__no">02 / 23</span>
   </div>
 </section>
 
@@ -572,23 +588,9 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
       </div>
     </div>
 
-    <div class="table-wrap anim" style="--d:560ms">
-      <div class="flow">
-        <div class="node"><div class="node__name">render(camera)</div><div class="node__sub">render/ &middot; backends/</div></div>
-        <span class="arrow">&#8594;</span>
-        <div class="node"><div class="node__name">Observation</div><div class="node__sub">rgb + depth + top-down</div></div>
-        <span class="arrow">&#8594;</span>
-        <div class="node node--accent"><div class="node__name">VLM</div><div class="node__sub">verbo egocentrico</div></div>
-        <span class="arrow">&#8594;</span>
-        <div class="node"><div class="node__name">apply_action</div><div class="node__sub">nav/ &middot; update coverage</div></div>
-        <span class="arrow">&#8594;</span>
-        <div class="node"><div class="node__name">StopPolicies</div><div class="node__sub">filters &rarr; nuove pose</div></div>
-      </div>
-    </div>
-
-    <p class="ref">src/gaussian_robot/ &middot; Renderer &amp; VLMClient = @runtime_checkable Protocol (render/base.py, vlm/client.py)</p>
+    <p class="ref" style="margin-top:1rem">src/gaussian_robot/ &middot; Renderer &amp; VLMClient = @runtime_checkable Protocol (render/base.py, vlm/client.py) &middot; il loop <code>render &#8594; Observation &#8594; VLM &#8594; apply_action &#8594; StopPolicies</code> &egrave; nella slide 02.</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">02 / 12</span>
+    <span class="slide__no">03 / 23</span>
   </div>
 </section>
 
@@ -605,7 +607,6 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
             <th>ADR</th>
             <th>Decisione</th>
             <th>Sintesi operativa</th>
-            <th>Stato</th>
           </tr>
         </thead>
         <tbody>
@@ -613,49 +614,41 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
             <td class="mono">0001/02</td>
             <td>Architettura pluggable</td>
             <td>Renderer e VLM dietro <strong>protocolli</strong>, no early binding. Mondo <code>+Y up</code>, floor <code>XZ</code>; camera OpenCV (<code>+Z fwd</code>).</td>
-            <td><span class="pill pill--green">accepted</span></td>
           </tr>
           <tr>
             <td class="mono">0003</td>
             <td>Controllo locale + multi-seed</td>
             <td>Controller incrementale: <strong>1 azione discreta/step</strong> + restart multi-seed da capture pose. Waypoint globali e frontier-teleport <span class="hl-2">differiti</span>.</td>
-            <td><span class="pill pill--green">accepted</span></td>
           </tr>
           <tr>
             <td class="mono">0004</td>
             <td>Action set egocentrico</td>
             <td>7 verbi: <code>forward/back/turn/look/stop</code>. Magnitudini <strong>system-owned</strong>: step = <span class="hl">0.03 &times; diag AABB</span>, rot/pitch = <span class="hl">30&deg;</span>. Il VLM emette <em>solo il verbo</em>.</td>
-            <td><span class="pill pill--green">accepted</span></td>
           </tr>
           <tr>
             <td class="mono">0005</td>
             <td>Observation 3 pannelli</td>
             <td><strong>RGB + depth colormap + top-down body-fixed</strong> (pose, trail, freccia) + prompt fisso + 1 riga di stato.</td>
-            <td><span class="pill pill--green">accepted</span></td>
           </tr>
           <tr>
             <td class="mono">0006</td>
             <td>Terminazione StopPolicy</td>
             <td>OR-composte, 2 livelli. Per-walk: budget N=40, <span class="hl">coverage plateau primario</span>, bounds/render degenere. <strong>Stop del VLM demoto</strong> a voto del plateau.</td>
-            <td><span class="pill pill--green">accepted</span></td>
           </tr>
           <tr>
             <td class="mono">0007</td>
             <td>Metrica = Goal A</td>
             <td><strong>Plausibilita, non verita</strong> geometrica. Tier1 (coverage% + novelty) attivo; Tier3 ray/gaussian later, <span class="hl-2">Tier4 retrain differito</span>.</td>
-            <td><span class="pill pill--green">accepted</span></td>
           </tr>
           <tr>
             <td class="mono">0008</td>
             <td>Filtri deliverable</td>
             <td><code>quality drop &#8594; novelty dedup (farthest-point, r_keep) &#8594; budget cap P</code>. <strong>Position-only</strong> per v1.</td>
-            <td><span class="pill pill--green">accepted</span></td>
           </tr>
           <tr>
             <td class="mono">0009</td>
             <td>Seeding da capture pose</td>
             <td>Le capture pose del training sono <strong>ground truth</strong> di "dove una camera puo stare e vedere geometria reale", invece di indovinare da density grid.</td>
-            <td><span class="pill pill--green">accepted</span></td>
           </tr>
         </tbody>
       </table>
@@ -663,7 +656,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <p class="ref anim" style="--d:240ms">ADR 0001-0009 &middot; tutte accepted &middot; src/gaussian_robot/{nav,filters,metrics,splat,session.py}</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">04 / 12</span>
+    <span class="slide__no">04 / 23</span>
   </div>
 </section>
 
@@ -742,7 +735,144 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <p class="ref anim" style="--d:360ms">Decisioni gia implementate &middot; estensioni (FisherRF/anchor/VLA) trattate nelle sezioni Goal 1 e Goal 2</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">05 / 12</span>
+    <span class="slide__no">05 / 23</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">03 / IL TOOL</span>
+    <h2 class="slide__title anim">Una <span class="hl">dashboard</span> che rende il loop ispezionabile</h2>
+    <p class="slide__subtitle anim" style="--d:80ms">Non solo lo script: un server web che <strong>streamma il walk in tempo reale</strong> (SSE), espone ogni osservazione che il VLM vede e ogni decisione che prende. Lo strumento con cui debuggiamo e dimostriamo la pipeline <code>render &#8594; VLM &#8594; action</code>.</p>
+
+    <div class="row anim" style="--d:120ms">
+      <span class="pill pill--cyan"><span class="dot"></span> web &middot; SSE live</span>
+      <span class="pill pill--green">single-GPU</span>
+      <span class="pill">run / step-by-step / next-step</span>
+      <span class="pill pill--ghost">vLLM start/stop in-UI</span>
+    </div>
+
+    <div class="cols" style="margin-top:1.1rem">
+      <div class="stack">
+        <div class="card card--accent anim" style="--d:160ms">
+          <div class="card__title">Cosa vede il VLM, in chiaro</div>
+          <div class="card__body">I <strong>4 pannelli di Observation</strong> a ogni step: <code>rgb</code>, <code>depth</code>, <code>opacity</code> (buchi = scuro) e <code>map (body-fixed)</code>. La stessa immagine passata al modello &mdash; nessuna scatola nera.</div>
+        </div>
+        <div class="card anim" style="--d:240ms">
+          <div class="card__title">Decisione tracciabile</div>
+          <div class="card__body">Pannelli <code>Scene description</code>, <code>Action log</code> e <span class="hl-w">VLM decision / reasoning</span>: il verbo emesso e il ragionamento dietro, step per step. I <em>chip</em> di stato mostrano fase, coverage e <code>marks N/target</code> dal vivo.</div>
+        </div>
+        <div class="card anim" style="--d:320ms">
+          <div class="card__title">Controllo dell'esecuzione</div>
+          <div class="card__body"><span class="hl">Run session</span> per il walk completo, <span class="hl">Step-by-step + Next step</span> per avanzare un'azione alla volta, <code>Test forward</code> per la sola locomozione. Config scena/backends e <code>vLLM</code> avviabile dall'interfaccia.</div>
+        </div>
+      </div>
+
+      <div class="stack anim anim--right" style="--d:200ms">
+        <div class="table-wrap">
+          <svg viewBox="0 0 460 360" width="100%" role="img" aria-label="Mockup della dashboard: 4 pannelli osservazione, mappa coverage world-frame, barra di replay">
+            <defs>
+              <linearGradient id="dgm" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#1b2433"/><stop offset="1" stop-color="#11151f"/>
+              </linearGradient>
+            </defs>
+            <rect x="6" y="6" width="448" height="348" rx="12" fill="#0b0e16" stroke="#232a3d"/>
+            <!-- chips bar -->
+            <rect x="20" y="20" width="58" height="18" rx="9" fill="none" stroke="#2bb3a4"/>
+            <text x="49" y="33" text-anchor="middle" fill="#46e6d0" font-family="monospace" font-size="10">walk1</text>
+            <rect x="86" y="20" width="92" height="18" rx="9" fill="none" stroke="#3a4760"/>
+            <text x="132" y="33" text-anchor="middle" fill="#aab3c8" font-family="monospace" font-size="10">cov 38%</text>
+            <rect x="186" y="20" width="92" height="18" rx="9" fill="none" stroke="#8b7bff"/>
+            <text x="232" y="33" text-anchor="middle" fill="#8b7bff" font-family="monospace" font-size="10">marks 2/5</text>
+            <!-- 4 observation panels -->
+            <g font-family="monospace" font-size="9" fill="#6c7790">
+              <rect x="20"  y="50" width="100" height="64" rx="6" fill="url(#dgm)" stroke="#232a3d"/><text x="70"  y="128" text-anchor="middle">rgb</text>
+              <rect x="128" y="50" width="100" height="64" rx="6" fill="url(#dgm)" stroke="#232a3d"/><text x="178" y="128" text-anchor="middle">depth</text>
+              <rect x="236" y="50" width="100" height="64" rx="6" fill="url(#dgm)" stroke="#232a3d"/><text x="286" y="128" text-anchor="middle">opacity</text>
+              <rect x="344" y="50" width="92"  height="64" rx="6" fill="url(#dgm)" stroke="#46e6d0" stroke-opacity="0.5"/><text x="390" y="128" text-anchor="middle">body-map</text>
+            </g>
+            <!-- depth colormap hint -->
+            <rect x="134" y="56" width="88" height="52" rx="3" fill="#1a2440" opacity="0.7"/>
+            <!-- body map arrow -->
+            <circle cx="390" cy="82" r="20" fill="none" stroke="#2bb3a4" stroke-opacity="0.4"/>
+            <line x1="390" y1="82" x2="390" y2="66" stroke="#46e6d0" stroke-width="2"/>
+            <!-- world map -->
+            <text x="20" y="156" fill="#aab3c8" font-family="monospace" font-size="11">Global coverage (world frame)</text>
+            <circle cx="160" cy="244" r="74" fill="#0e1119" stroke="#232a3d"/>
+            <circle cx="160" cy="244" r="50" fill="none" stroke="#1b2030"/>
+            <circle cx="160" cy="244" r="26" fill="none" stroke="#1b2030"/>
+            <text x="160" y="178" text-anchor="middle" fill="#6c7790" font-family="monospace" font-size="9">N</text>
+            <!-- trail -->
+            <path d="M150,270 C135,250 150,225 170,222 C188,219 200,236 192,250" fill="none" stroke="#46e6d0" stroke-width="2"/>
+            <circle cx="150" cy="270" r="3" fill="#ffc764"/>
+            <!-- mark diamonds -->
+            <path d="M170,222 l5,5 l-5,5 l-5,-5 z" fill="#8b7bff"/>
+            <path d="M192,250 l5,5 l-5,5 l-5,-5 z" fill="#8b7bff"/>
+            <!-- frontier diamond -->
+            <path d="M208,228 l4,4 l-4,4 l-4,-4 z" fill="#ff5fa2"/>
+            <!-- legend -->
+            <g font-family="monospace" font-size="9">
+              <circle cx="262" cy="200" r="3" fill="#ffc764"/><text x="272" y="203" fill="#aab3c8">seed</text>
+              <path d="M262,216 l4,4 l-4,4 l-4,-4 z" fill="#8b7bff"/><text x="272" y="223" fill="#aab3c8">mark (deliverable)</text>
+              <path d="M262,232 l4,4 l-4,4 l-4,-4 z" fill="#ff5fa2"/><text x="272" y="239" fill="#aab3c8">frontier / gap</text>
+              <rect x="258" y="250" width="8" height="2" fill="#46e6d0"/><text x="272" y="255" fill="#aab3c8">trail</text>
+            </g>
+            <!-- replay scrub -->
+            <text x="20" y="332" fill="#aab3c8" font-family="monospace" font-size="11">Walk replay</text>
+            <rect x="116" y="324" width="20" height="12" rx="3" fill="none" stroke="#46e6d0"/>
+            <text x="126" y="333" text-anchor="middle" fill="#46e6d0" font-size="9" font-family="monospace">&#9654;</text>
+            <line x1="146" y1="330" x2="436" y2="330" stroke="#232a3d" stroke-width="3"/>
+            <circle cx="300" cy="330" r="5" fill="#46e6d0"/>
+          </svg>
+        </div>
+        <p class="ref">src/gaussian_robot/ui/server.py (SSE <code>/api/run</code>, <code>/api/walks</code>) &middot; ui/page.py (pannelli) &middot; ui/serialize.py</p>
+      </div>
+    </div>
+
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">06 / 23</span>
+  </div>
+</section>
+
+<section class="slide">
+  <div class="slide__inner">
+    <span class="kicker">03 / IL TOOL &mdash; LEGGIBILIT&Agrave;</span>
+    <h2 class="slide__title anim">Le feature che rendono il walk <span class="hl">leggibile e azionabile</span></h2>
+    <p class="slide__subtitle anim" style="--d:80ms">Quattro feature per capire <em>cosa</em> fa il bot, <em>perch&eacute;</em> si ferma e <em>cosa</em> consegna.</p>
+
+    <div class="grid-2 anim" style="--d:140ms">
+      <div class="card card--accent">
+        <div class="card__num">&#9670; MARK</div>
+        <div class="card__title">L'azione <code>mark</code> = il deliverable</div>
+        <div class="card__body">Il VLM marca la posa corrente come <span class="hl-w">&laquo;vista da riempire&raquo;</span> (no-op di movimento, neutra per plateau/stuck). <code>assemble_deliverable()</code> seleziona le marcate per qualit&agrave;/novelty/budget; fallback alle traiettorie. Le marcature sono <strong>diamanti viola</strong> sulla world-map + chip <code>marks N/target</code>.</div>
+      </div>
+
+      <div class="card">
+        <div class="card__num" style="color:var(--magenta)">&#9670; FRONTIER</div>
+        <div class="card__title">Steering verso i veri buchi</div>
+        <div class="card__body">L'obiettivo &egrave; raggiungere le <span class="hl-w">celle density quasi vuote</span> adiacenti all'osservato (<code>frontier_mask</code>), non &laquo;ci&ograve; che si vede male&raquo;. Il <em>nearest-gap</em> entra come bearing nello <code>[state]</code> + <strong>diamante magenta</strong> sulla body-map. Muri e alberi = ostacoli, non bersagli. <span class="muted">Segnale per il VLM, non ancora un planner.</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card__num" style="color:var(--amber)">&#9654; REPLAY</div>
+        <div class="card__title">Walk replay narrato</div>
+        <div class="card__body">Fly-through <strong>interpolato</strong> (slerp SO(3) sulle rotazioni) della traiettoria completa, disponibile <span class="hl">live anche durante il walk</span>. Mostra le <em>didascalie</em> di svolte/describe e si <span class="hl-w">ferma sui mark</span> (hold). Scrub + play/pausa, caption sotto al frame.</div>
+      </div>
+
+      <div class="card">
+        <div class="card__num" style="color:var(--green)">&#10003; STOP</div>
+        <div class="card__title">Stop con motivazione + mappa nitida</div>
+        <div class="card__body">Ogni policy emette un <code>reason</code> (<code>WalkEndEvent</code>); il plateau ignora le rotazioni pure. World-map a <span class="hl-w">zoom locale</span> con anelli, scala, nord ed etichette assi &mdash; <em>capture</em> (ambra) vs <em>fallback</em> (arancio). Anti-spin: mai &gt;2 rotazioni di fila.</div>
+      </div>
+    </div>
+
+    <div class="callout callout--info anim" style="--d:340ms">
+      <strong>Filo conduttore.</strong> Insieme rendono il walk difendibile: la <span class="hl">marcatura</span> esplicita il deliverable, <span class="hl-2">frontier</span> e replay spiegano le scelte, lo stop motivato chiude il walk. <span class="muted">Aperto: deliverable non ancora agganciato a un export sink; frontier ancora segnale, non planner (Goal 1 / P2).</span>
+    </div>
+
+    <p class="ref anim" style="--d:420ms">nav/observation.py (frontier_mask) &middot; session.py (assemble_deliverable, render_walk_movie, interpolate_walk_poses) &middot; nav/stop.py (reason, WalkEndEvent)</p>
+    <span class="slide__brand">GAUSSIAN-ROBOT</span>
+    <span class="slide__no">07 / 23</span>
   </div>
 </section>
 
@@ -845,7 +975,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <div class="ref anim" style="--d:420ms">src/gaussian_robot/session.py &mdash; _best_origin, _select_seeds (score = med &times; alpha_mean) &middot; filters/pose_filters.py &mdash; farthest_point_select</div>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">04 / 12</span>
+    <span class="slide__no">08 / 23</span>
   </div>
 </section>
 
@@ -927,7 +1057,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     </div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">04 / 12</span>
+    <span class="slide__no">09 / 23</span>
   </div>
 </section>
 
@@ -986,7 +1116,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <p class="ref">Fonti: FisherRF (ECCV 2024) arXiv:2311.17874 &middot; GauSS-MI (RSS 2025) arXiv:2504.21067 &middot; research note &laquo;sintesi VLN&raquo;.</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">05 / 12</span>
+    <span class="slide__no">10 / 23</span>
   </div>
 </section>
 
@@ -1059,7 +1189,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <p class="ref">Lu et al., <em>Scaffold-GS: Structured 3D Gaussians for View-Adaptive Rendering</em>, CVPR 2024 (Highlight) &#183; arXiv:2312.00109 &#183; city-super.github.io/scaffold-gs</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">04 / 12</span>
+    <span class="slide__no">11 / 23</span>
   </div>
 </section>
 
@@ -1102,7 +1232,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <p class="ref">Ren et al., <em>Octree-GS</em>, arXiv:2403.17898 &#183; Chen et al., <em>HAC++: Towards 100X Compression of 3DGS</em>, TPAMI 2025, arXiv:2501.12255 &#183; SOGS, CVPR 2025, arXiv:2503.07476</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">05 / 12</span>
+    <span class="slide__no">12 / 23</span>
   </div>
 </section>
 
@@ -1155,7 +1285,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <p class="ref">Inquadramento Goal 1: NBV &#8594; view-gen &#8594; densify. I due riferimenti seguenti sono entrambi <em>world-consistency / view-generation</em>, NON metodi anchor-3DGS.</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">01 / 02</span>
+    <span class="slide__no">13 / 23</span>
   </div>
 </section>
 
@@ -1215,7 +1345,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <p class="ref">Fonti: HY-World 2.0 &#8212; arXiv:2604.14268 &#183; github.com/Tencent-Hunyuan/HY-World-2.0 &#183; huggingface.co/tencent/HY-World-2.0 | AnchorWeave &#8212; Zun Wang et al., arXiv:2602.14941 (cs.CV, feb 2026) &#183; github.com/wz0919/AnchorWeave</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">02 / 02</span>
+    <span class="slide__no">14 / 23</span>
   </div>
 </section>
 
@@ -1267,7 +1397,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
 
     <p class="ref anim" style="--d:380ms">Fonti: FisherRF (ECCV'24), GauSS-MI (RSS'25), MapGPT (ACL'24), WMNav (IROS'25), StructNav (RSS'23). Note: numeri headline su GPT-4V — trasferibilita su Qwen self-hosted non verificata.</p>
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">01 / 02</span>
+    <span class="slide__no">15 / 23</span>
   </div>
 </section>
 
@@ -1336,7 +1466,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     </div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">02 / 02</span>
+    <span class="slide__no">16 / 23</span>
   </div>
 </section>
 
@@ -1381,7 +1511,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     </div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">06 / 12</span>
+    <span class="slide__no">17 / 23</span>
   </div>
 </section>
 
@@ -1437,7 +1567,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     <p class="ref anim" style="--d:420ms">OpenVLA LoRA single-A100, 1.4% params, quant. consumer-GPU (arXiv:2406.09246) &middot; OpenVLA-OFT: parallel decoding, action chunking, L1 regression, 26&times; speed, 97.1% LIBERO (arXiv:2502.19645) &middot; &pi;0-FAST: tokenizz. DCT+BPE, 5&times; training (hf.co/blog/pi0)</p>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">07 / 12</span>
+    <span class="slide__no">18 / 23</span>
   </div>
 </section>
 
@@ -1517,7 +1647,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     <div class="ref">FisherRF (ECCV 2024) &middot; GauSS-MI (RSS 2025) &middot; MapGPT (ACL 2024) &middot; Scaffold/Octree-GS &middot; HY-World 2.0 &middot; OpenVLA+LoRA (CoRL 2024) &mdash; cfr. ADR 0004 / 0009</div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">08 / 09</span>
+    <span class="slide__no">19 / 23</span>
   </div>
 </section>
 
@@ -1562,7 +1692,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     </div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">07 / 12</span>
+    <span class="slide__no">20 / 23</span>
   </div>
 </section>
 
@@ -1651,7 +1781,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     <p class="ref">Fonti: MapGPT (ACL 2024) &middot; WMNav (IROS 2025) &middot; FisherRF (ECCV 2024) &middot; GauSS-MI (RSS 2025) &middot; StructNav (RSS 2023) &middot; PONI (CVPR 2022) — numeri originali su GPT-4V / hardware non specificato.</p>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">08 / 12</span>
+    <span class="slide__no">21 / 23</span>
   </div>
 </section>
 
@@ -1684,7 +1814,7 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     </div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">12 / 13</span>
+    <span class="slide__no">22 / 23</span>
   </div>
 </section>
 
@@ -1727,10 +1857,16 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     </div>
 
     <span class="slide__brand">GAUSSIAN-ROBOT</span>
-    <span class="slide__no">13 / 13</span>
+    <span class="slide__no">23 / 23</span>
   </div>
 </section>
 </main>
+<button class="fs-btn" id="fs-btn" type="button" title="Fullscreen (F)" aria-label="Attiva/disattiva schermo intero">
+  <svg id="fs-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/>
+  </svg>
+  <span id="fs-label">Fullscreen</span>
+</button>
 <script>
 /* ============================================================
    SPLAT LAB deck navigation + entrance reveals
@@ -1780,13 +1916,46 @@ table.tbl{ width:100%; border-collapse:collapse; font-size:.88rem; min-width:520
     slides[i].scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  /* ---- fullscreen toggle ---- */
+  var fsBtn = document.getElementById('fs-btn');
+  var fsIcon = document.getElementById('fs-icon');
+  var fsLabel = document.getElementById('fs-label');
+  var fsTarget = document.documentElement;
+  function fsElement() {
+    return document.fullscreenElement || document.webkitFullscreenElement || null;
+  }
+  function toggleFullscreen() {
+    if (fsElement()) {
+      (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+    } else {
+      var req = fsTarget.requestFullscreen || fsTarget.webkitRequestFullscreen;
+      if (req) {
+        var p = req.call(fsTarget);
+        if (p && p.catch) p.catch(function () {});
+      }
+    }
+  }
+  function syncFsUi() {
+    var on = !!fsElement();
+    if (fsLabel) fsLabel.textContent = on ? 'Exit' : 'Fullscreen';
+    if (fsIcon) {
+      fsIcon.innerHTML = on
+        ? '<path d="M9 4v4a1 1 0 0 1-1 1H4M15 4v4a1 1 0 0 0 1 1h4M15 20v-4a1 1 0 0 1 1-1h4M9 20v-4a1 1 0 0 0-1-1H4"/>'
+        : '<path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"/>';
+    }
+  }
+  if (fsBtn) fsBtn.addEventListener('click', toggleFullscreen);
+  document.addEventListener('fullscreenchange', syncFsUi);
+  document.addEventListener('webkitfullscreenchange', syncFsUi);
+
   /* ---- keyboard nav ---- */
   var FWD = { ArrowDown: 1, ArrowRight: 1, PageDown: 1, ' ': 1, Spacebar: 1 };
   var BACK = { ArrowUp: 1, ArrowLeft: 1, PageUp: 1 };
   document.addEventListener('keydown', function (ev) {
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     var k = ev.key;
-    if (FWD[k]) { ev.preventDefault(); goTo(currentIndex() + 1); }
+    if (k === 'f' || k === 'F') { ev.preventDefault(); toggleFullscreen(); }
+    else if (FWD[k]) { ev.preventDefault(); goTo(currentIndex() + 1); }
     else if (BACK[k]) { ev.preventDefault(); goTo(currentIndex() - 1); }
     else if (k === 'Home') { ev.preventDefault(); goTo(0); }
     else if (k === 'End') { ev.preventDefault(); goTo(slides.length - 1); }
