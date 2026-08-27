@@ -152,8 +152,15 @@ class StuckGuard:
             self._positions.pop(0)
         if len(self._positions) >= self.window:
             arr = np.array(self._positions)
-            span = float(np.linalg.norm(arr.max(axis=0) - arr.min(axis=0)))
-            if span < self.step * self.min_displacement_factor:
+            # Progress = how far the window's SECOND half sits from its first half.
+            # Neither the bounding-box span nor the endpoint distance catches an
+            # A-B-A-B oscillation (blocked forward, step back, push again): both are
+            # a full step length, so an episode could burn its whole budget jittering
+            # in front of an obstacle. Comparing half-window centroids reads ~0 for
+            # any oscillation and grows with real translation.
+            half = len(arr) // 2
+            net = float(np.linalg.norm(arr[half:].mean(axis=0) - arr[:half].mean(axis=0)))
+            if net < self.step * self.min_displacement_factor:
                 self._triggered = True
 
     def should_stop(self) -> bool:

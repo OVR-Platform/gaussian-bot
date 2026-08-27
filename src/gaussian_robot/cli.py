@@ -7,6 +7,8 @@ that need them.
 
 from __future__ import annotations
 
+import os
+
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
@@ -174,6 +176,10 @@ def navigate(
     target = _parse_target(target_xyz)
     if target is not None:
         explorer.observation_builder.task_target = target
+        explorer.observation_builder.target_hint_mode = os.environ.get(
+            "GR_TARGET_HINT", "bearing")   # bearing | distance | off (ablation switch)
+        if explorer.observation_builder.target_hint_mode == "off":
+            explorer.observation_builder.target_hint = False
         # BEFORE TaskStop, so simultaneous arrival+stop reports the measured reason.
         explorer.walk_policies.insert(0, GoalReached(target=target, eps=goal_eps, up_axis=up_axis))
 

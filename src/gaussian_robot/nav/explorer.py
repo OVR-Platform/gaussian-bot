@@ -167,6 +167,7 @@ class Explorer:
     _marks_total: int = 0  # running count of marked fill-in poses this session
     _mark_pos: list[np.ndarray] = field(default_factory=list)  # 3D positions of marks (dedup)
     _eye_offset: float | None = None  # camera height above local ground for this walk
+    _last_ground: float | None = None  # last TRUSTED ground estimate under the camera
     _carrying: bool = False  # task mode: is the robot currently carrying the target?
 
     def _describe_step(
@@ -390,12 +391,19 @@ class Explorer:
         if ground is None:
             return pose
         up = up_vector(self.scene.up_axis)
-        delta = (ground + self._eye_offset) - float(pose.position @ up)
-        # Terrain undulates gradually: one floor step can't change ground height by much more
-        # than a step length. A larger jump is a bad cell estimate (a sparse/edge cell, or one
-        # dominated by a wall/column/ceiling), not real slope — clamp it so the camera is never
-        # teleported off the mapped floor into the void (which reads as degenerate -> bounds).
         max_climb = self.action_space.step
+        # Real terrain changes GRADUALLY from cell to cell: a new ground estimate that
+        # disagrees with the last trusted one by more than a step length is a bad cell
+        # (below-floor floaters, or a cell dominated by a wall/column/ceiling), not a
+        # slope. Following it walks the camera down one clamped step per action until it
+        # is under the floor — the render degenerates and the walk dies on `bounds`.
+        # Reject the estimate and hold the height we have instead.
+        if self._last_ground is not None and abs(ground - self._last_ground) > max_climb:
+            return pose
+        self._last_ground = ground
+        delta = (ground + self._eye_offset) - float(pose.position @ up)
+        # Rate limit what a single action may change, so even an accepted estimate cannot
+        # teleport the camera off the mapped floor.
         delta = float(np.clip(delta, -max_climb, max_climb))
         return Pose(position=pose.position + delta * up, rotation=pose.rotation)
 
@@ -488,6 +496,13 @@ class Explorer:
         )
 
         self._eye_offset = self._seed_eye_offset(seed_pose)
+        # the seed pose is a real capture pose: its cell's ground is the trusted baseline
+        self._last_ground = (
+            None
+            if self.height_field is None
+            else self.height_field.ground(float(seed_pose.position[0]),
+                                          float(seed_pose.position[2]))
+        )
         self._carrying = False  # fresh carried-state per walk
 
         action_history: list[str] = []

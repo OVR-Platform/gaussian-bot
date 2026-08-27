@@ -181,7 +181,16 @@ class ObservationBuilder:
     map_span: float | None = None
     task: str = ""
     mode: str = "densify"  # "densify" (explore for coverage) | "task" (pursue the goal in `task`)
-    task_target: np.ndarray | None = None  # (3,) world pos of the task target (privileged GT hint)
+    task_target: np.ndarray | None = None  # (3,) world pos of the task target (privileged GT)
+    # Whether that privileged position is also reported to the VLM as a bearing. It is
+    # STATE, not an instruction (see _task_state_line): the earlier wording told the model
+    # to steer by coordinates and it drove through furniture that was plainly visible in
+    # [rgb]. Set False to run vision-only — the target is still used to MEASURE arrival
+    # either way (ADR-0012).
+    target_hint: bool = True
+    # What of the goal is reported: "bearing" (distance + angle), "distance" (how far
+    # only — no direction, so the model has to search), or "off" (nothing).
+    target_hint_mode: str = "bearing"
     depth_estimator: DepthEstimator | None = None
     describe_prompt: str = (
         "This is a render of a 3D Gaussian Splatting (3DGS) reconstruction, not a real photo. "
@@ -271,12 +280,13 @@ class ObservationBuilder:
         "HOW TO ACT:\n"
         "- NAVIGATE toward the target. forward/back move you; turn_left/turn_right and "
         "look_up/look_down only change where you look; move_up/move_down change height.\n"
-        "- When [state] reports a TARGET bearing/distance, STEER BY IT: if it says a side, "
-        "turn that way until the target is roughly ahead, then go forward to close the distance. "
-        "It is your compass to the goal — trust it over guessing.\n"
-        "- GROUND THE TARGET in the [rgb] view: if you can see the thing the MISSION refers to, "
-        "head straight to it. If you can't see it, explore toward where it is likely to be "
-        "(through doorways, along the room) and DESCRIBE to reason about what you see.\n"
+        "- DECIDE FROM THE PANELS. The [rgb] view is your evidence: find the thing the MISSION "
+        "refers to in it and head for it; if you cannot see it, explore toward where it is "
+        "likely to be (through doorways, along the room).\n"
+        "- READ THE WAY AHEAD before moving. If furniture, a wall or a partition is in front of "
+        "you — a large surface filling the lower or central [rgb], a bright band in [depth] — "
+        "forward will not get you past it: turn to a side that looks open and move there first, "
+        "even when the target is straight ahead. Going around is progress.\n"
         "- GRAB when you have reached the object to pick up (you must be right in front of it). "
         "DROP when you have carried it to the destination and are in place to release it. These "
         "are simulated: they do not move you, they only change whether you are carrying it "
@@ -341,7 +351,7 @@ class ObservationBuilder:
         wall_distance = wall_distance_from_depth(result.depth)
         if task_mode:
             target_info = None
-            if self.task_target is not None:
+            if self.task_target is not None and self.target_hint:
                 tgt_floor = floor_xy(self.task_target, self.up_axis)[0]
                 target_info = self._gap_bearing(camera.pose, cur_floor, tgt_floor)
             state_line = self._task_state_line(
@@ -427,20 +437,23 @@ class ObservationBuilder:
             f"carrying {'yes' if carrying else 'no'}",
         ]
         if target_info is not None:
+            # Report the bearing as STATE, never as an order: the old wording ("go forward",
+            # "turn left then forward") made the model a coordinate follower that drove
+            # through whatever was in the way. What to do about the bearing is its call,
+            # made on the panels.
             dist, bearing = target_info
-            if abs(bearing) < 12:
-                parts.append(f"TARGET {dist:.1f}m ahead — go forward")
+            if self.target_hint_mode == "distance":
+                parts.append(f"TARGET: {dist:.1f}m away (direction not given)")
             else:
-                side = "right" if bearing > 0 else "left"
-                parts.append(
-                    f"TARGET {abs(bearing):.0f}° {side}, {dist:.1f}m — turn {side} then forward"
-                )
+                where = "ahead" if abs(bearing) < 12 else (
+                    f"{abs(bearing):.0f}\u00b0 to your {'right' if bearing > 0 else 'left'}")
+                parts.append(f"TARGET bearing: {dist:.1f}m, {where}")
         if wall_distance is not None:
             parts.append(f"wall ahead {wall_distance:.2f}m")
         if blocked_ahead:
             parts.append(
-                "!! BLOCKED: a wall is right ahead and your last forward did NOT move you — "
-                "do not go forward; BACK up or turn ~180° (same way 3×) toward open space"
+                "!! BLOCKED: your last forward did NOT move you, so something solid is right "
+                "in front of the camera — look at [rgb] and choose a way around it"
             )
         return "; ".join(parts)
 
